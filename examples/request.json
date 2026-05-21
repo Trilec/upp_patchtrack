@@ -1,0 +1,26 @@
+{
+  "workspace_root": "E:/apps/github/myrepo",
+  "summary": "Add greeting comment",
+  "actor": "codex",
+  "session": {
+    "goal": "safe agent edit demo"
+  },
+  "edits": [
+    {
+      "op": "insert_after_exact",
+      "file": "src/main.cpp",
+      "anchor": "#include <Core/Core.h>\n",
+      "text": "// inserted by PatchTrack\n"
+    }
+  ],
+  "validation": {
+    "must_contain": [
+      "inserted by PatchTrack"
+    ],
+    "forbid": [
+      "<<<<<<<",
+      ">>>>>>>",
+      "`r`n"
+    ]
+  }
+}

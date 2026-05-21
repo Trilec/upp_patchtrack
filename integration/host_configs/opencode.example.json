@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "patchtrack": {
+      "command": "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+

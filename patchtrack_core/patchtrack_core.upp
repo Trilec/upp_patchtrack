@@ -1,0 +1,9 @@
+uses
+    Core;
+
+file
+    patchtrack_core.h,
+    patchtrack_core.cpp,
+    platform_fs.h,
+    platform_fs_win.cpp,
+    platform_fs_posix.cpp;

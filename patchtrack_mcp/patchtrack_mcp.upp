@@ -1,0 +1,9 @@
+uses
+    Core,
+    patchtrack_core;
+
+file
+    main.cpp;
+
+mainconfig
+    "" = "CONSOLE";
