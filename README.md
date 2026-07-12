@@ -301,7 +301,7 @@ A focused MCP smoke test that checks:
 - tool routing and schema validation for the MCP frontend.
 
 ### Real stdio host probe
-On Windows, `integration/mcp_stdio_smoke.ps1` starts one long-lived MCP server and sends framed `initialize` and `tools/list` requests through real redirected stdin/stdout. This catches host-stream framing problems that in-process tests cannot see.
+On Windows, `integration/mcp_stdio_smoke.ps1` starts one long-lived MCP server and sends newline-delimited `initialize` and `tools/list` requests through real redirected stdin/stdout. This catches host-stream problems that in-process tests cannot see.
 
 ### `patchtrack_tests`
 A black-box protocol harness that:

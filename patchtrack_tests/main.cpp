@@ -144,6 +144,12 @@ CommandResult RunTool(const String& exe, const Vector<String>& args, const Strin
 
 bool ParseMcpResponseBody(const String& framed, String& body)
 {
+    String trimmed = TrimBoth(framed);
+    if(trimmed.StartsWith("{")) {
+        body = trimmed;
+        return true;
+    }
+
     int split = framed.Find("\r\n\r\n");
     int header_len = 4;
     if(split < 0) {
@@ -889,7 +895,7 @@ void TestMcpSelfTestSmoke(Harness& h)
 
 void TestMcpRoundTrip(Harness& h)
 {
-    CaseLog case_log(h, "mcp-roundtrip", "Exercises framed MCP tool calls for hash, preview, apply, rollback, and recovery scan.");
+    CaseLog case_log(h, "mcp-roundtrip", "Exercises newline-delimited MCP tool calls for hash, preview, apply, rollback, and recovery scan.");
     String root = MakeCaseRoot(h, "mcp-roundtrip");
     String rel = "src/sample.txt";
     String abs = AppendFileName(root, rel);

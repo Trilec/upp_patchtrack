@@ -674,82 +674,47 @@ bool HandleJsonRpcRequest(const Value& request, String& response_json, bool& has
     return false;
 }
 
-bool ReadFramedMessage(String& body, String& error, bool& eof)
+bool ReadMcpMessage(String& body, String& error, bool& eof)
 {
     body.Clear();
     error.Clear();
     eof = false;
 
-    String header;
     for(;;) {
         int ch = fgetc(stdin);
         if(ch == EOF) {
-            if(header.IsEmpty()) {
+            if(body.IsEmpty()) {
                 eof = true;
                 return false;
             }
-            error = "Unexpected EOF while reading MCP headers.";
+            error = "Unexpected EOF while reading MCP message.";
             return false;
         }
-        header.Cat((char)ch);
-        // Windows text-mode stdin may translate CRLF to LF before the parser sees it.
-        // MCP peers normally send CRLF, but accepting LF-only framing keeps the
-        // server interoperable with redirected and host-managed standard streams.
-        if(header.EndsWith("\r\n\r\n") || header.EndsWith("\n\n"))
+        if(ch == '\n')
             break;
-        if(header.GetCount() > 8192) {
-            error = "MCP header exceeded 8 KB.";
+        if(ch != '\r')
+            body.Cat((char)ch);
+        if(body.GetCount() > 16 * 1024 * 1024) {
+            error = "MCP message exceeded 16 MB.";
             return false;
         }
     }
-
-    int content_length = -1;
-    Vector<String> lines = Split(header, "\n");
-    for(int i = 0; i < lines.GetCount(); i++) {
-        String line = TrimBoth(lines[i]);
-        if(line.IsEmpty())
-            continue;
-        int colon = line.Find(':');
-        if(colon < 0)
-            continue;
-        String key = ToLower(TrimBoth(line.Left(colon)));
-        String value = TrimBoth(line.Mid(colon + 1));
-        if(key == "content-length")
-            content_length = ScanInt(value);
-    }
-
-    if(content_length < 0) {
-        error = "Missing Content-Length header.";
-        return false;
-    }
-
-    String data;
-    data.Reserve(content_length);
-    while(data.GetCount() < content_length) {
-        char buffer[1024];
-        int need = min<int>(content_length - data.GetCount(), (int)sizeof(buffer));
-
-        // Large tool responses can come back in chunks, so keep reading until the
-        // declared byte count is satisfied instead of assuming a single fread wins.
-        int read = (int)fread(buffer, 1, need, stdin);
-        if(read <= 0) {
-            error = "Unexpected EOF while reading MCP body.";
-            return false;
-        }
-        data.Cat(buffer, read);
-    }
-
-    body = data;
     return true;
 }
 
-void WriteFramedMessage(const String& body)
+void WriteMcpMessage(const String& body)
 {
-    String header;
-    header << "Content-Length: " << body.GetLength() << "\r\n\r\n";
-
-    fwrite(~header, 1, header.GetLength(), stdout);
-    fwrite(~body, 1, body.GetLength(), stdout);
+    // MCP stdio requires one compact JSON-RPC object per line. Internal builders
+    // stay readable, so compact the object only at the transport boundary.
+    String message = body;
+    try {
+        message = AsJSON(ParseJSON(body), false);
+    }
+    catch(CParser::Error) {
+        // Keep the original body so a transport error is still observable.
+    }
+    fwrite(~message, 1, message.GetLength(), stdout);
+    fputc('\n', stdout);
     fflush(stdout);
 }
 
@@ -778,7 +743,7 @@ int RunOneShot(const String& request_file)
 {
     String body = LoadFile(request_file);
     if(IsNull(body)) {
-        WriteFramedMessage(BuildJsonRpcError("null", -32700, "Unable to read request file"));
+        WriteMcpMessage(BuildJsonRpcError("null", -32700, "Unable to read request file"));
         return 1;
     }
 
@@ -786,7 +751,7 @@ int RunOneShot(const String& request_file)
     bool has_response = false;
     ProcessJsonRpcBody(body, response_json, has_response);
     if(has_response)
-        WriteFramedMessage(response_json);
+        WriteMcpMessage(response_json);
     return has_response ? 0 : 1;
 }
 
@@ -828,10 +793,10 @@ int RunServerLoop()
         String message;
         String error;
         bool eof = false;
-        if(!ReadFramedMessage(message, error, eof)) {
+        if(!ReadMcpMessage(message, error, eof)) {
             if(eof)
                 return 0;
-            WriteFramedMessage(BuildJsonRpcError("null", -32700, error));
+            WriteMcpMessage(BuildJsonRpcError("null", -32700, error));
             return 1;
         }
 
@@ -840,12 +805,12 @@ int RunServerLoop()
             parsed = ParseJSON(message);
         }
         catch(CParser::Error) {
-            WriteFramedMessage(BuildJsonRpcError("null", -32700, "Invalid JSON"));
+            WriteMcpMessage(BuildJsonRpcError("null", -32700, "Invalid JSON"));
             return 1;
         }
 
         if(!parsed.Is<ValueMap>()) {
-            WriteFramedMessage(BuildJsonRpcError("null", -32600, "Invalid Request"));
+            WriteMcpMessage(BuildJsonRpcError("null", -32600, "Invalid Request"));
             return 1;
         }
 
@@ -853,7 +818,7 @@ int RunServerLoop()
         bool has_response = false;
         HandleJsonRpcRequest(parsed, response_json, has_response);
         if(has_response)
-            WriteFramedMessage(response_json);
+            WriteMcpMessage(response_json);
     }
 }
 

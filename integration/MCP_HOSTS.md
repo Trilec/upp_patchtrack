@@ -49,7 +49,7 @@ Run the real Windows stdio host probe after building:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\integration\mcp_stdio_smoke.ps1
 ```
 
-It starts one long-lived server and sends both `initialize` and `tools/list` through the actual framed stdin/stdout protocol.
+It starts one long-lived server and sends both `initialize` and `tools/list` through the actual newline-delimited stdin/stdout protocol.
 
 ## Server Command
 

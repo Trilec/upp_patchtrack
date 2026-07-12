@@ -13,7 +13,7 @@ function Read-LineBytes {
     while($true) {
         $value = $Stream.ReadByte()
         if($value -lt 0) {
-            throw "MCP server closed stdout while reading a header."
+            throw "MCP server closed stdout while reading an MCP message."
         }
         if($value -eq 10) {
             break
@@ -25,39 +25,12 @@ function Read-LineBytes {
     return [Text.Encoding]::ASCII.GetString($bytes.ToArray())
 }
 
-function Read-Exact {
-    param([System.IO.Stream]$Stream, [int]$Length)
-    $buffer = New-Object byte[] $Length
-    $offset = 0
-    while($offset -lt $Length) {
-        $read = $Stream.Read($buffer, $offset, $Length - $offset)
-        if($read -le 0) {
-            throw "MCP server closed stdout before the full response arrived."
-        }
-        $offset += $read
-    }
-    return $buffer
-}
-
 function Send-McpRequest {
     param([System.Diagnostics.Process]$Process, [string]$Body)
-    $payload = [Text.Encoding]::UTF8.GetBytes($Body)
-    $header = [Text.Encoding]::ASCII.GetBytes("Content-Length: $($payload.Length)`r`n`r`n")
-    $frame = New-Object byte[] ($header.Length + $payload.Length)
-    [Array]::Copy($header, 0, $frame, 0, $header.Length)
-    [Array]::Copy($payload, 0, $frame, $header.Length, $payload.Length)
-    $Process.StandardInput.BaseStream.Write($frame, 0, $frame.Length)
+    $payload = [Text.Encoding]::UTF8.GetBytes($Body + "`n")
+    $Process.StandardInput.BaseStream.Write($payload, 0, $payload.Length)
     $Process.StandardInput.BaseStream.Flush()
-
-    $length = -1
-    do {
-        $line = Read-LineBytes $Process.StandardOutput.BaseStream
-        if($line -match '^Content-Length:\s*(\d+)$') {
-            $length = [int]$Matches[1]
-        }
-    } while($length -lt 0)
-    [void](Read-LineBytes $Process.StandardOutput.BaseStream)
-    return [Text.Encoding]::UTF8.GetString((Read-Exact $Process.StandardOutput.BaseStream $length))
+    return Read-LineBytes $Process.StandardOutput.BaseStream
 }
 
 if(!(Test-Path -LiteralPath $Server)) {

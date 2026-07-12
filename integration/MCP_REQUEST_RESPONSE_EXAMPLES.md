@@ -2,7 +2,7 @@
 
 These examples show the raw JSON-RPC payloads PatchTrack expects over MCP stdio.
 
-Normal hosts handle the `Content-Length` framing automatically. The framing is shown here so agent and host integration tests can verify the exact protocol shape.
+MCP stdio uses newline-delimited UTF-8 JSON-RPC messages. Each request and response is one JSON object on one line; messages must not contain embedded newlines.
 
 ## Initialize
 
@@ -12,11 +12,9 @@ Request body:
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 ```
 
-Framed request:
+Request on stdin:
 
 ```text
-Content-Length: 58
-
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 ```
 
