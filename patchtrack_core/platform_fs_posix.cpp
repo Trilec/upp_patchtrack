@@ -85,11 +85,17 @@ bool PlatformReadFileRaw(const String& path, String& out, PlatformErrorCode& cod
 
 bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorCode& code)
 {
-    int fd = open(~path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    static int sequence = 0;
+    String temp = path + Format(".patchtrack-tmp-%d-%d", (int)getpid(), ++sequence);
+    int fd = open(~temp, O_WRONLY | O_CREAT | O_EXCL, 0666);
     if(fd < 0) {
         code = errno;
         return false;
     }
+
+    struct stat old_stat;
+    if(stat(~path, &old_stat) == 0)
+        fchmod(fd, old_stat.st_mode & 07777);
 
     int done = 0;
     while(done < data.GetLength()) {
@@ -98,12 +104,39 @@ bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorC
         if(wrote < 0) {
             code = errno;
             close(fd);
+            unlink(~temp);
+            return false;
+        }
+        if(wrote == 0) {
+            code = EIO;
+            close(fd);
+            unlink(~temp);
             return false;
         }
         done += (int)wrote;
     }
 
+    if(fsync(fd) != 0) {
+        code = errno;
+        close(fd);
+        unlink(~temp);
+        return false;
+    }
     close(fd);
+
+    if(rename(~temp, ~path) != 0) {
+        code = errno;
+        unlink(~temp);
+        return false;
+    }
+
+    String folder = GetFileFolder(path);
+    int dir_fd = open(~folder, O_RDONLY);
+    if(dir_fd >= 0) {
+        fsync(dir_fd);
+        close(dir_fd);
+    }
+
     code = 0;
     return true;
 }

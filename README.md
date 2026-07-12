@@ -73,6 +73,8 @@ Host setup notes live in `integration/MCP_HOSTS.md`.
 
 Raw request/response examples live in `integration/MCP_REQUEST_RESPONSE_EXAMPLES.md`.
 
+The v1 acceptance procedure lives in `integration/V1_RELEASE_CHECKLIST.md`.
+
 Current MCP tools:
 - `patchtrack_preview`
 - `patchtrack_apply`
@@ -229,6 +231,7 @@ Current implemented guarantees:
 - `apply` records a `pending` transaction before commit;
 - every changed file gets a before-snapshot before commit proceeds;
 - file hashes are re-checked immediately before write;
+- each individual file write is staged to a sibling temporary file, flushed, and atomically renamed into place;
 - if a write-stage failure happens after one or more files were written, earlier writes are restored;
 - rollback performs full preflight before changing any file;
 - if rollback itself fails part-way through, rollback writes are restored back to their pre-rollback state;
@@ -245,6 +248,7 @@ Current built-in validation includes:
 - merge-marker rejection;
 - literal escaped PowerShell newline sequence rejection;
 - NUL-byte rejection;
+- protected `.patchtrack` journal paths cannot be used as edit targets;
 - newline style, BOM, and EOF newline preservation.
 
 ## Soft Concurrency Claims
@@ -296,6 +300,9 @@ A focused MCP smoke test that checks:
 - `tools/list`;
 - tool routing and schema validation for the MCP frontend.
 
+### Real stdio host probe
+On Windows, `integration/mcp_stdio_smoke.ps1` starts one long-lived MCP server and sends framed `initialize` and `tools/list` requests through real redirected stdin/stdout. This catches host-stream framing problems that in-process tests cannot see.
+
 ### `patchtrack_tests`
 A black-box protocol harness that:
 - generates disposable workspaces;
@@ -320,7 +327,7 @@ Current harness coverage includes:
 - 1000-edit single-transaction batch stress;
 - 1000 sequential transaction stress;
 - MCP frontend smoke coverage;
-- MCP oneshot and persistent-stdio transport benchmark coverage.
+- MCP oneshot and repeated in-process dispatch benchmark coverage.
 
 ## Current Verification Status
 Latest verified commands in this workspace:
@@ -335,6 +342,7 @@ Current status:
 - `patchtrack selftest`: passing
 - `patchtrack_mcp --selftest`: passing
 - protocol harness: `21 / 21` passing
+- real Windows MCP stdio probe: passing
 
 Latest observed transport benchmark on this machine:
 - core preview: about `0.09 ms`
@@ -389,9 +397,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify.ps1 -SkipProtoc
 
 ## What Is Still Not Solved
 Current important gaps:
+- canonical symlink/reparse-point containment and race-resistant no-follow opens for hostile workspaces;
+- full Unicode-path validation for Windows filesystem calls;
 - deeper permission diagnostics that can distinguish more specific causes such as read-only attributes, sandbox policy, or another process holding a lock;
 - external OS-failure reproduction beyond explicit fault hooks, such as real disk-full and managed-directory policy failures in automated runs;
-- crash-consistency beyond journal inspection after abrupt mid-apply or mid-rollback termination;
+- full power-loss durability across a multi-file transaction, beyond per-file atomic replacement and journal inspection;
 - stronger multi-session coordination policies beyond the current soft claim layer;
 - very large multi-file stress beyond the current transaction shapes;
 - richer semantic edits such as symbol-aware C++ transforms.

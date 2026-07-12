@@ -157,6 +157,21 @@ bool ExpectStringField(const Value& args, const char *key, bool required, String
     return true;
 }
 
+bool ExpectBoolField(const Value& args, const char *key, bool required, String& error_json)
+{
+    Value v = args[key];
+    if(IsNull(v)) {
+        if(required)
+            error_json = BuildSimpleFailureJson("BAD_REQUEST", String("Missing boolean field '") + key + "'.");
+        return !required;
+    }
+    if(!v.Is<bool>()) {
+        error_json = BuildSimpleFailureJson("BAD_REQUEST", String("Field '") + key + "' must be a boolean.");
+        return false;
+    }
+    return true;
+}
+
 bool ExpectObjectField(const Value& args, const char *key, bool required, String& error_json)
 {
     Value v = args[key];
@@ -217,6 +232,18 @@ bool ValidatePreviewApplyArgs(const Value& args, String& error_json)
     if(!ExpectMap(args, "arguments", error_json))
         return false;
 
+    Vector<String> allowed;
+    allowed.Add("workspace_root");
+    allowed.Add("summary");
+    allowed.Add("actor");
+    allowed.Add("session");
+    allowed.Add("allow_suspicious");
+    allowed.Add("validation");
+    allowed.Add("testing");
+    allowed.Add("edits");
+    if(!RejectUnexpectedKeys(args, allowed, error_json))
+        return false;
+
     String discard;
     if(!ExpectStringField(args, "workspace_root", true, discard, error_json))
         return false;
@@ -224,7 +251,9 @@ bool ValidatePreviewApplyArgs(const Value& args, String& error_json)
         return false;
     if(!ExpectStringField(args, "actor", false, discard, error_json))
         return false;
-    if(!ExpectStringField(args, "session", false, discard, error_json))
+    if(!ExpectObjectField(args, "session", false, error_json))
+        return false;
+    if(!ExpectBoolField(args, "allow_suspicious", false, error_json))
         return false;
     if(!ExpectObjectField(args, "validation", false, error_json))
         return false;
@@ -236,6 +265,14 @@ bool ValidatePreviewApplyArgs(const Value& args, String& error_json)
 bool ValidateRollbackArgs(const Value& args, String& error_json)
 {
     if(!ExpectMap(args, "arguments", error_json))
+        return false;
+
+    Vector<String> allowed;
+    allowed.Add("workspace_root");
+    allowed.Add("transaction_id");
+    allowed.Add("actor");
+    allowed.Add("session");
+    if(!RejectUnexpectedKeys(args, allowed, error_json))
         return false;
 
     String discard;
@@ -319,7 +356,8 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"summary\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"string\"},\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false},\n"
+        "          \"allow_suspicious\": {\"type\": \"boolean\"},\n"
         "          \"validation\": {\"type\": \"object\"},\n"
         "          \"testing\": {\"type\": \"object\"},\n"
         "          \"edits\": {\n"
@@ -327,15 +365,29 @@ String BuildToolsListResult()
         "            \"items\": {\n"
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
-        "              \"properties\": {\n"
-        "                \"op\": {\"type\": \"string\"},\n"
-        "                \"file\": {\"type\": \"string\"}\n"
-        "              },\n"
-        "              \"additionalProperties\": true\n"
+                "              \"properties\": {\n"
+                "                \"op\": {\"type\": \"string\"},\n"
+        "                \"file\": {\"type\": \"string\"},\n"
+        "                \"find\": {\"type\": \"string\"},\n"
+        "                \"text\": {\"type\": \"string\"},\n"
+        "                \"replace\": {\"type\": \"string\"},\n"
+        "                \"new_text\": {\"type\": \"string\"},\n"
+        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n"
+        "                \"anchor\": {\"type\": \"string\"},\n"
+        "                \"start\": {\"type\": \"string\"},\n"
+        "                \"end\": {\"type\": \"string\"},\n"
+        "                \"include\": {\"type\": \"string\"},\n"
+        "                \"expected_sha256\": {\"type\": \"string\"},\n"
+        "                \"expected_hash\": {\"type\": \"string\"},\n"
+        "                \"start_line\": {\"type\": \"integer\"},\n"
+        "                \"end_line\": {\"type\": \"integer\"},\n"
+        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}\n"
+                "              },\n"
+                "              \"additionalProperties\": false\n"
         "            }\n"
         "          }\n"
         "        },\n"
-        "        \"additionalProperties\": true\n"
+        "        \"additionalProperties\": false\n"
         "      }\n"
         "    },\n"
         "    {\n"
@@ -348,7 +400,8 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"summary\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"string\"},\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false},\n"
+        "          \"allow_suspicious\": {\"type\": \"boolean\"},\n"
         "          \"validation\": {\"type\": \"object\"},\n"
         "          \"testing\": {\"type\": \"object\"},\n"
         "          \"edits\": {\n"
@@ -356,15 +409,29 @@ String BuildToolsListResult()
         "            \"items\": {\n"
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
-        "              \"properties\": {\n"
-        "                \"op\": {\"type\": \"string\"},\n"
-        "                \"file\": {\"type\": \"string\"}\n"
-        "              },\n"
-        "              \"additionalProperties\": true\n"
+                "              \"properties\": {\n"
+                "                \"op\": {\"type\": \"string\"},\n"
+        "                \"file\": {\"type\": \"string\"},\n"
+        "                \"find\": {\"type\": \"string\"},\n"
+        "                \"text\": {\"type\": \"string\"},\n"
+        "                \"replace\": {\"type\": \"string\"},\n"
+        "                \"new_text\": {\"type\": \"string\"},\n"
+        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n"
+        "                \"anchor\": {\"type\": \"string\"},\n"
+        "                \"start\": {\"type\": \"string\"},\n"
+        "                \"end\": {\"type\": \"string\"},\n"
+        "                \"include\": {\"type\": \"string\"},\n"
+        "                \"expected_sha256\": {\"type\": \"string\"},\n"
+        "                \"expected_hash\": {\"type\": \"string\"},\n"
+        "                \"start_line\": {\"type\": \"integer\"},\n"
+        "                \"end_line\": {\"type\": \"integer\"},\n"
+        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}\n"
+                "              },\n"
+                "              \"additionalProperties\": false\n"
         "            }\n"
         "          }\n"
         "        },\n"
-        "        \"additionalProperties\": true\n"
+        "        \"additionalProperties\": false\n"
         "      }\n"
         "    },\n"
         "    {\n"
@@ -377,9 +444,9 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"transaction_id\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"string\"}\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false}\n"
         "        },\n"
-        "        \"additionalProperties\": true\n"
+        "        \"additionalProperties\": false\n"
         "      }\n"
         "    },\n"
         "    {\n"
@@ -625,7 +692,10 @@ bool ReadFramedMessage(String& body, String& error, bool& eof)
             return false;
         }
         header.Cat((char)ch);
-        if(header.EndsWith("\r\n\r\n"))
+        // Windows text-mode stdin may translate CRLF to LF before the parser sees it.
+        // MCP peers normally send CRLF, but accepting LF-only framing keeps the
+        // server interoperable with redirected and host-managed standard streams.
+        if(header.EndsWith("\r\n\r\n") || header.EndsWith("\n\n"))
             break;
         if(header.GetCount() > 8192) {
             error = "MCP header exceeded 8 KB.";

@@ -10,6 +10,9 @@
 - Updated the README to act as the public MCP-first entry point, including CLI usage, MCP tool usage, request examples, failure model, transaction guarantees, diagnostics, build flow, and current verification status.
 - Finished the dedicated MCP round-trip integration test so it validates framed MCP responses, preview/apply/rollback state transitions, transaction id propagation, and recovery scan success.
 - Extended transport profiling so the harness now separates CLI, MCP `--oneshot`, and repeated MCP dispatch cost inside one server process.
+- Added atomic per-file replacement with flush and temporary-file cleanup, shared request type validation, protected journal-path rejection, and corrected MCP session object schemas.
+- Fixed Windows redirected-stdin framing by accepting both CRLF and LF header termination, and added `integration/mcp_stdio_smoke.ps1` for a real long-lived stdio host probe.
+- Added `integration/V1_RELEASE_CHECKLIST.md` with automated, host-level, manual failure, and release-boundary checks.
 
 ## 2026-04-28
 - Backed up the pre-refactor implementation into `OLD/`, extracted the existing engine/CLI logic into `patchtrack_core`, and rebuilt `patchtrack` as a transport-only CLI frontend over the exported core APIs.

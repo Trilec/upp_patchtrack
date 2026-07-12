@@ -43,6 +43,14 @@ Expected output:
 mcp-selftest: ok
 ```
 
+Run the real Windows stdio host probe after building:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\integration\mcp_stdio_smoke.ps1
+```
+
+It starts one long-lived server and sends both `initialize` and `tools/list` through the actual framed stdin/stdout protocol.
+
 ## Server Command
 
 Use this as the server command in MCP host configs:

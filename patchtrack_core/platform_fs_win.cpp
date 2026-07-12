@@ -94,9 +94,20 @@ bool PlatformReadFileRaw(const String& path, String& out, PlatformErrorCode& cod
 
 bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorCode& code)
 {
-    HANDLE h = CreateFileA(~path, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    String temp_name;
+    HANDLE h = INVALID_HANDLE_VALUE;
+    for(int i = 0; i < 16; i++) {
+        temp_name = path + Format(".patchtrack-tmp-%d-%d", (int)GetCurrentProcessId(), i);
+        h = CreateFileA(~temp_name, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if(h != INVALID_HANDLE_VALUE)
+            break;
+        if(GetLastError() != ERROR_FILE_EXISTS) {
+            code = (PlatformErrorCode)GetLastError();
+            return false;
+        }
+    }
     if(h == INVALID_HANDLE_VALUE) {
-        code = (PlatformErrorCode)GetLastError();
+        code = ERROR_FILE_EXISTS;
         return false;
     }
 
@@ -107,12 +118,32 @@ bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorC
         if(!WriteFile(h, ~data + done, ask, &wrote, NULL)) {
             code = (PlatformErrorCode)GetLastError();
             CloseHandle(h);
+            DeleteFileA(~temp_name);
+            return false;
+        }
+        if(wrote == 0) {
+            code = ERROR_WRITE_FAULT;
+            CloseHandle(h);
+            DeleteFileA(~temp_name);
             return false;
         }
         done += wrote;
     }
 
+    if(!FlushFileBuffers(h)) {
+        code = (PlatformErrorCode)GetLastError();
+        CloseHandle(h);
+        DeleteFileA(~temp_name);
+        return false;
+    }
     CloseHandle(h);
+
+    if(!MoveFileExA(~temp_name, ~path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        code = (PlatformErrorCode)GetLastError();
+        DeleteFileA(~temp_name);
+        return false;
+    }
+
     code = 0;
     return true;
 }

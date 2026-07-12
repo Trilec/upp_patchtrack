@@ -1,7 +1,7 @@
 /*
 PatchTrack core engine.
 
-This file contains the journaled patch engine, CLI entry points, and built-in selftest.
+This file contains the journaled patch engine and built-in selftest.
 The transactional areas intentionally prefer explicit state recording over implicit success
 so that hosts and future MCP adapters can distinguish pending, applied, restored, and
 manual-recovery-required outcomes.
@@ -452,7 +452,13 @@ bool IsAbsoluteOrUnsafePath(const String& rel)
         return true;
     if(rel.GetLength() >= 2 && rel[1] == ':')
         return true;
-    if(rel.Find("..") >= 0)
+    if(rel.Find("..") >= 0 || rel.Find('\0') >= 0)
+        return true;
+    String normalized = rel;
+    normalized.Replace("\\\\", "/");
+    int slash = normalized.Find('/');
+    String first = ToLower(normalized.Left(slash < 0 ? normalized.GetCount() : slash));
+    if(first == ".patchtrack")
         return true;
     return false;
 }
@@ -851,6 +857,8 @@ String GetJsonString(Value v, const String& def = String())
 {
     if(IsNull(v))
         return def;
+    if(!v.Is<String>())
+        return def;
     return (String)v;
 }
 
@@ -858,19 +866,143 @@ bool GetJsonBool(Value v, bool def = false)
 {
     if(IsNull(v))
         return def;
+    if(!v.Is<bool>())
+        return def;
     return (bool)v;
 }
 
 Vector<String> GetJsonStringArray(Value v)
 {
     Vector<String> out;
-    if(IsNull(v))
+    if(IsNull(v) || !v.Is<ValueArray>())
         return out;
 
     for(int i = 0; i < v.GetCount(); i++)
-        out.Add((String)v[i]);
+        if(v[i].Is<String>())
+            out.Add((String)v[i]);
 
     return out;
+}
+
+bool ValidateStringField(const ValueMap& map, const char *key, bool required, String& error)
+{
+    Value value = map[key];
+    if(IsNull(value)) {
+        if(required)
+            error = String("BAD_REQUEST||why=field '") + key + "' must be a string";
+        return !required;
+    }
+    if(!value.Is<String>()) {
+        error = String("BAD_REQUEST||why=field '") + key + "' must be a string";
+        return false;
+    }
+    return true;
+}
+
+bool ValidateStringArrayField(const ValueMap& map, const char *key, String& error)
+{
+    Value value = map[key];
+    if(IsNull(value))
+        return true;
+    if(!value.Is<ValueArray>()) {
+        error = String("BAD_REQUEST||why=field '") + key + "' must be an array of strings";
+        return false;
+    }
+    for(int i = 0; i < value.GetCount(); i++) {
+        if(!value[i].Is<String>()) {
+            error = String("BAD_REQUEST||why=field '") + key + "' must be an array of strings";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateRequestShape(Value req, String& error)
+{
+    if(!req.Is<ValueMap>()) {
+        error = "BAD_REQUEST||why=request must be an object";
+        return false;
+    }
+
+    const ValueMap& map = req;
+    if(!ValidateStringField(map, "workspace_root", true, error))
+        return false;
+    if(GetJsonString(map["workspace_root"]).IsEmpty()) {
+        error = "BAD_REQUEST||why=workspace_root must not be empty";
+        return false;
+    }
+    if(!ValidateStringField(map, "summary", false, error) ||
+       !ValidateStringField(map, "actor", false, error))
+        return false;
+
+    Value session = map["session"];
+    if(!IsNull(session)) {
+        if(!session.Is<ValueMap>()) {
+            error = "BAD_REQUEST||why=session must be an object";
+            return false;
+        }
+        const ValueMap& session_map = session;
+        if(!ValidateStringField(session_map, "id", false, error) ||
+           !ValidateStringField(session_map, "goal", false, error))
+            return false;
+    }
+
+    Value allow_suspicious = map["allow_suspicious"];
+    if(!IsNull(allow_suspicious) && !allow_suspicious.Is<bool>()) {
+        error = "BAD_REQUEST||why=allow_suspicious must be boolean";
+        return false;
+    }
+
+    Value validation = map["validation"];
+    if(!IsNull(validation)) {
+        if(!validation.Is<ValueMap>()) {
+            error = "BAD_REQUEST||why=validation must be an object";
+            return false;
+        }
+        const ValueMap& validation_map = validation;
+        if(!ValidateStringArrayField(validation_map, "must_contain", error) ||
+           !ValidateStringArrayField(validation_map, "forbid", error))
+            return false;
+    }
+
+    Value edits = map["edits"];
+    if(!edits.Is<ValueArray>() || edits.GetCount() == 0) {
+        error = "BAD_REQUEST||why=edits must be a non-empty array";
+        return false;
+    }
+
+    const char *string_fields[] = {
+        "find", "text", "replace", "new_text", "include", "anchor",
+        "start", "end", "expected_sha256", "expected_hash"
+    };
+    const char *array_fields[] = { "new_lines", "expected_contains" };
+    const char *integer_fields[] = { "start_line", "end_line" };
+
+    for(int i = 0; i < edits.GetCount(); i++) {
+        if(!edits[i].Is<ValueMap>()) {
+            error = Format("BAD_REQUEST||why=edit %d must be an object", i);
+            return false;
+        }
+        const ValueMap& edit = edits[i];
+        if(!ValidateStringField(edit, "op", true, error) ||
+           !ValidateStringField(edit, "file", true, error))
+            return false;
+        for(unsigned j = 0; j < sizeof(string_fields) / sizeof(string_fields[0]); j++)
+            if(!ValidateStringField(edit, string_fields[j], false, error))
+                return false;
+        for(unsigned j = 0; j < sizeof(array_fields) / sizeof(array_fields[0]); j++)
+            if(!ValidateStringArrayField(edit, array_fields[j], error))
+                return false;
+        for(unsigned j = 0; j < sizeof(integer_fields) / sizeof(integer_fields[0]); j++) {
+            Value value = edit[integer_fields[j]];
+            if(!IsNull(value) && !value.Is<int>() && !value.Is<int64>() && !value.Is<double>()) {
+                error = String("BAD_REQUEST||why=field '") + integer_fields[j] + "' must be an integer";
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 String GetPayloadText(Value edit)
@@ -1201,6 +1333,9 @@ bool ValidatePlanned(Value req, const Vector<PlannedFile>& files, String& error)
 
 bool Plan(Value req, Vector<PlannedFile>& files, String& error)
 {
+    if(!ValidateRequestShape(req, error))
+        return false;
+
     String root = GetJsonString(req["workspace_root"], GetCurrentDirectory());
     Value edits = req["edits"];
     if(IsNull(edits) || edits.GetCount() == 0) {
@@ -2188,23 +2323,6 @@ bool Rollback(Value req, String& result_json, String& error)
                 << "}\n";
     return true;
 }
-String Usage()
-{
-    return
-        "patchtrack - transactional source editing for agents\n\n"
-        "Commands:\n"
-        "  patchtrack preview request.json\n"
-        "  patchtrack apply request.json\n"
-        "  patchtrack rollback request.json\n"
-        "  patchtrack selftest\n"
-        "  patchtrack hash <file>\n"
-        "  patchtrack history <workspace-root>\n\n"
-        "Request schema: workspace_root, summary, actor, edits[].\n"
-        "Supported ops: replace_exact, replace_all_exact, insert_before_exact,\n"
-        "insert_after_exact, delete_exact, rewrite_file, replace_between,\n"
-        "replace_lines, ensure_include.\n";
-}
-
 bool Expect(bool condition, const String& message, Vector<String>& failures)
 {
     if(condition)

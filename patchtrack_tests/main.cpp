@@ -472,6 +472,10 @@ void TestBatchPrimitivesAndRollback(Harness& h)
     Expect(h, LoadFile(AppendFileName(root, seed[7].rel)) == "zero\nONE\nTWO\nthree\n", "batch-primitives: replace_lines mismatch");
     Expect(h, LoadFile(AppendFileName(root, seed[8].rel)) == "fresh\nblock\n", "batch-primitives: rewrite_file mismatch");
     Expect(h, IsFolderPath(AppendFileName(root, ".patchtrack")), "batch-primitives: apply did not create journal");
+    for(int i = 0; i < CountOf(seed); i++) {
+        String temp_pattern = AppendFileName(root, String(seed[i].rel) + ".patchtrack-tmp-*");
+        Expect(h, !FindFile(temp_pattern), "batch-primitives: atomic write temporary file was left behind: " + temp_pattern);
+    }
 
     String tran_id = (String)apply["transaction_id"];
     String session_id = (String)apply["session_id"];
@@ -664,6 +668,26 @@ void TestEngineFailures(Harness& h)
               << "}\n";
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "range.json", range_req)), false, out, "engine-failures range-error"))
         ExpectErrorCode(h, out, "RANGE_ERROR", "engine-failures range-error");
+
+    String malformed_req;
+    malformed_req << "{\n"
+                  << "  \"workspace_root\": " << JString(root) << ",\n"
+                  << "  \"summary\": \"malformed types\",\n"
+                  << "  \"actor\": \"harness\",\n"
+                  << "  \"edits\": [{\"op\":\"replace_lines\",\"file\":\"src/hash.txt\",\"start_line\":\"2\",\"end_line\":3,\"new_lines\":[\"x\"]}]\n"
+                  << "}\n";
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "malformed-types.json", malformed_req)), false, out, "engine-failures malformed-types"))
+        ExpectErrorCode(h, out, "BAD_REQUEST", "engine-failures malformed-types");
+
+    String journal_req;
+    journal_req << "{\n"
+                << "  \"workspace_root\": " << JString(root) << ",\n"
+                << "  \"summary\": \"journal escape\",\n"
+                << "  \"actor\": \"harness\",\n"
+                << "  \"edits\": [{\"op\":\"rewrite_file\",\"file\":\".patchtrack/workspace.json\",\"text\":\"tamper\"}]\n"
+                << "}\n";
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "journal-escape.json", journal_req)), false, out, "engine-failures journal-path"))
+        ExpectErrorCode(h, out, "UNSAFE_PATH", "engine-failures journal-path");
 }
 
 void TestTransportFailures(Harness& h)
@@ -890,6 +914,11 @@ void TestMcpRoundTrip(Harness& h)
                  << ",\"start_line\":2,\"end_line\":2,\"new_lines\":[\"gamma\"]}]"
                  << "}";
 
+    String invalid_session_args = preview_args;
+    invalid_session_args.Replace("\"actor\":\"harness\",", "\"actor\":\"harness\",\"session\":\"legacy-string\",");
+    CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "patchtrack_preview", invalid_session_args));
+    Expect(h, invalid_session_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: string session should be rejected");
+
     CommandResult preview_cmd = RunMcpRequest(h, root, BuildMcpToolCall(2, "patchtrack_preview", preview_args));
     Value preview_rpc;
     String preview_body_json;
@@ -947,6 +976,7 @@ void TestMcpRoundTrip(Harness& h)
     Expect(h, scan_cmd.out.Find("\"ok\": true") >= 0 || scan_cmd.out.Find("\"ok\":true") >= 0,
            "mcp-roundtrip: recovery scan did not report ok");
 }
+
 void TestTransportBenchmark(Harness& h)
 {
     CaseLog case_log(h, "transport-benchmark", "Profiles direct core preview against CLI, MCP oneshot, and repeated MCP dispatch so overhead is visible in the console output.");
