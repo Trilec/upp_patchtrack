@@ -967,10 +967,39 @@ void TestMcpRoundTrip(Harness& h)
                  << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
                  << "}";
 
-    String invalid_session_args = preview_args;
-    invalid_session_args.Replace("\"actor\":\"harness\",", "\"actor\":\"harness\",\"session\":\"legacy-string\",");
-    CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "patchtrack_preview", invalid_session_args));
+    String invalid_session_string_args;
+    invalid_session_string_args << "{"
+                               << "\"workspace_root\":" << JString(root) << ","
+                               << "\"summary\":\"mcp preview\","
+                               << "\"actor\":\"harness\","
+                               << "\"session\":\"legacy-string\","
+                               << "\"edits\":[{\"op\":\"replace_exact\",\"file\":" << JString(rel)
+                               << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
+                               << "}";
+    int string_session_key_first = invalid_session_string_args.Find("\"session\"");
+    Expect(h, string_session_key_first >= 0 && string_session_key_first == invalid_session_string_args.ReverseFind("\"session\""),
+           "mcp-roundtrip: string session request should contain exactly one session key");
+    CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "patchtrack_preview", invalid_session_string_args));
     Expect(h, invalid_session_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: string session should be rejected");
+    Expect(h, invalid_session_cmd.out.Find("must be an object") >= 0, "mcp-roundtrip: string session should mention object");
+    Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: string session mutation leaked through");
+
+    String invalid_session_prefix_args;
+    invalid_session_prefix_args << "{"
+                                << "\"workspace_root\":" << JString(root) << ","
+                                << "\"summary\":\"mcp preview\","
+                                << "\"actor\":\"harness\","
+                                << "\"session\":{\"id\":\"legacy-roundtrip\",\"goal\":\"replace beta with gamma\"},"
+                                << "\"edits\":[{\"op\":\"replace_exact\",\"file\":" << JString(rel)
+                                << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
+                                << "}";
+    int prefix_session_key_first = invalid_session_prefix_args.Find("\"session\"");
+    Expect(h, prefix_session_key_first >= 0 && prefix_session_key_first == invalid_session_prefix_args.ReverseFind("\"session\""),
+           "mcp-roundtrip: prefixed-session request should contain exactly one session key");
+    CommandResult invalid_prefix_cmd = RunMcpRequest(h, root, BuildMcpToolCall(21, "patchtrack_preview", invalid_session_prefix_args));
+    Expect(h, invalid_prefix_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: unprefixed session id should be rejected");
+    Expect(h, invalid_prefix_cmd.out.Find("sess-") >= 0, "mcp-roundtrip: unprefixed session id should mention sess-");
+    Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: unprefixed session mutation leaked through");
 
     String unsupported_args;
     unsupported_args << "{"
@@ -981,7 +1010,7 @@ void TestMcpRoundTrip(Harness& h)
                      << "\"edits\":[{\"op\":\"replace_text\",\"file\":" << JString(rel)
                      << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
                      << "}";
-    CommandResult unsupported_cmd = RunMcpRequest(h, root, BuildMcpToolCall(21, "patchtrack_preview", unsupported_args));
+    CommandResult unsupported_cmd = RunMcpRequest(h, root, BuildMcpToolCall(22, "patchtrack_preview", unsupported_args));
     Expect(h, unsupported_cmd.out.Find("UNSUPPORTED_OP") >= 0, "mcp-roundtrip: replace_text should be rejected");
     Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: unsupported op mutated file");
 

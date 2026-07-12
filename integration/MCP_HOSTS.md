@@ -116,7 +116,7 @@ Keep args empty.
 
 ## OpenCode
 
-OpenCode should launch the same stdio MCP server.
+OpenCode is installed; PatchTrack MCP configuration and real-host validation are pending.
 
 Recommended server name:
 
@@ -174,6 +174,7 @@ Agents should prefer this flow:
 6. Call `patchtrack_recovery_scan` if startup reports pending or recovery-required transactions.
 
 For a normal one-file text replacement, the canonical MCP shape is `op: replace_exact`, `find: <original text>`, `text: <replacement text>`. That keeps the host from inventing aliases that the engine never asked for.
+If you supply `session.id`, keep the prefix `sess-` so rollback and recovery can find the journal tree later.
 
 ## Troubleshooting
 

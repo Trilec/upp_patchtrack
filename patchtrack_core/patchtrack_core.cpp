@@ -945,6 +945,11 @@ bool ValidateRequestShape(Value req, String& error)
         if(!ValidateStringField(session_map, "id", false, error) ||
            !ValidateStringField(session_map, "goal", false, error))
             return false;
+        String sid = GetJsonString(session_map["id"]);
+        if(!sid.IsEmpty() && !sid.StartsWith("sess-")) {
+            error = "BAD_REQUEST||why=session.id must start with sess-";
+            return false;
+        }
     }
 
     Value allow_suspicious = map["allow_suspicious"];
@@ -1407,6 +1412,10 @@ String EnsureSession(Value req, const String& root, String& session_dir, String&
     String goal = GetJsonString(session["goal"], GetJsonString(req["summary"], "patchtrack session"));
     if(sid.IsEmpty())
         sid = "sess-" + Id10();
+    else if(!sid.StartsWith("sess-")) {
+        error = "BAD_REQUEST||why=session.id must start with sess-";
+        return String();
+    }
 
     String folder = sid + "-" + Slug(goal);
     session_dir = AppendFileName(JournalRoot(root), folder);

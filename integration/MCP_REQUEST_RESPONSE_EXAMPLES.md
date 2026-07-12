@@ -33,7 +33,7 @@ Response body shape:
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "patchtrack_mcp",
-      "version": "0.1.0"
+      "version": "1.0.0"
     },
     "capabilities": {
       "tools": {
@@ -129,7 +129,7 @@ Request body:
       "workspace_root": "E:\\apps\\github\\myrepo",
       "summary": "replace beta with gamma",
       "actor": "codex",
-      "session": {"id": "codex-session-1", "goal": "safe agent edit"},
+      "session": {"id": "sess-codex-session-1", "goal": "safe agent edit"},
       "edits": [
         {
           "op": "replace_exact",
@@ -180,7 +180,7 @@ Apply uses the same arguments as preview, but the tool name changes:
       "workspace_root": "E:\\apps\\github\\myrepo",
       "summary": "replace beta with gamma",
       "actor": "codex",
-      "session": {"id": "codex-session-1", "goal": "safe agent edit"},
+      "session": {"id": "sess-codex-session-1", "goal": "safe agent edit"},
       "edits": [
         {
           "op": "replace_exact",
@@ -211,7 +211,7 @@ Request body:
       "workspace_root": "E:\\apps\\github\\myrepo",
       "transaction_id": "tran-xxxxxxxxxx",
       "actor": "codex",
-      "session": {"id": "codex-session-1", "goal": "safe agent edit"}
+      "session": {"id": "sess-codex-session-1", "goal": "safe agent edit"}
     }
   }
 }

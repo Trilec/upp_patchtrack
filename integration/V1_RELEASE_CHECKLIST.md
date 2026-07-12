@@ -2,6 +2,8 @@
 
 This is the acceptance checklist for the first public MCP release.
 
+The initialize response should advertise `1.0.0`, and any supplied `session.id` should begin with `sess-`.
+
 ## Automated Windows Baseline
 
 From the repository root, with U++ installed at `E:\upp-18468`:

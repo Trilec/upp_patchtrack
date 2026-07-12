@@ -63,6 +63,7 @@ Typical CLI workflow:
 
 ## MCP Surface
 `patchtrack_mcp` is the first-class MCP stdio frontend over `patchtrack_core`.
+The first public MCP release advertises `1.0.0` in `initialize`.
 
 Target host integrations:
 - Codex
@@ -125,7 +126,7 @@ Minimal example:
 Natural-language mapping:
 - `Replace beta with BETA in one file` becomes `op: replace_exact`, `find: beta`, `text: BETA`.
 - Hash the file first and pass the returned digest as `expected_sha256` when you want a guarded edit.
-- Use `session` as an object when you need stable host metadata or rollback tracing.
+- Use `session` as an object when you need stable host metadata or rollback tracing, and give `session.id` a `sess-` prefix.
 
 ### `patchtrack_rollback`
 Required arguments:

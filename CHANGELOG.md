@@ -1,7 +1,8 @@
 # Changelog
 
 ## 2026-07-12
-- Tightened the MCP frontend schema so the canonical edit vocabulary is explicit, `session` is validated as an object, and the tool descriptions point agents at `replace_exact` and `text` instead of the old guess-your-own-adventure version.
+- Tightened the MCP frontend schema so the canonical edit vocabulary is explicit, `session` is validated as an object with a `sess-` prefix rule, and the tool descriptions point agents at `replace_exact` and `text` instead of the old guess-your-own-adventure version.
+- Bumped the advertised MCP initialize version to `1.0.0` and added a regression check for it. First public release, less mystery meat.
 - Added regression coverage for the tools/list schema shape, canonical op enumeration, unsupported-op refusal, and the newline-delimited MCP round trip that Codex actually uses.
 - Updated the public docs and release checklist to reflect the natural-language mapping and the current release-readiness checks. Small victory for ordinary nouns.
 

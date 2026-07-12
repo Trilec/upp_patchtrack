@@ -355,7 +355,7 @@ String BuildInitializeResult()
         "  \"protocolVersion\": \"2024-11-05\",\n"
         "  \"serverInfo\": {\n"
         "    \"name\": \"patchtrack_mcp\",\n"
-        "    \"version\": \"0.1.0\"\n"
+        "    \"version\": \"1.0.0\"\n"
         "  },\n"
         "  \"capabilities\": {\n"
         "    \"tools\": {\n"
@@ -380,7 +380,7 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"summary\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false},\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\", \"pattern\": \"^sess-.+\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false, \"description\": \"Optional session metadata. If supplied, session.id must start with sess-.\"},\n"
         "          \"allow_suspicious\": {\"type\": \"boolean\"},\n"
         "          \"validation\": {\"type\": \"object\"},\n"
         "          \"testing\": {\"type\": \"object\"},\n"
@@ -421,7 +421,7 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"summary\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false},\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\", \"pattern\": \"^sess-.+\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false, \"description\": \"Optional session metadata. If supplied, session.id must start with sess-.\"},\n"
         "          \"allow_suspicious\": {\"type\": \"boolean\"},\n"
         "          \"validation\": {\"type\": \"object\"},\n"
         "          \"testing\": {\"type\": \"object\"},\n"
@@ -462,7 +462,7 @@ String BuildToolsListResult()
         "          \"workspace_root\": {\"type\": \"string\"},\n"
         "          \"transaction_id\": {\"type\": \"string\"},\n"
         "          \"actor\": {\"type\": \"string\"},\n"
-        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false}\n"
+        "          \"session\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"string\", \"pattern\": \"^sess-.+\"}, \"goal\": {\"type\": \"string\"}}, \"additionalProperties\": false, \"description\": \"Optional session metadata. If supplied, session.id must start with sess-.\"}\n"
         "        },\n"
         "        \"additionalProperties\": false\n"
         "      }\n"
@@ -850,6 +850,7 @@ int RunSelfTest()
     Expect(st, HandleJsonRpcRequest(init, response, has_response), "initialize dispatch failed");
     Expect(st, has_response, "initialize should respond");
     Expect(st, response.Find("patchtrack_mcp") >= 0, "initialize response missing server name");
+    Expect(st, response.Find("1.0.0") >= 0, "initialize response missing v1 server version");
 
     Value list = ParseJSON("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n");
     Expect(st, HandleJsonRpcRequest(list, response, has_response), "tools/list dispatch failed");
