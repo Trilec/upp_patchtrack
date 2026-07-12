@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-12
+- Tightened the MCP frontend schema so the canonical edit vocabulary is explicit, `session` is validated as an object, and the tool descriptions point agents at `replace_exact` and `text` instead of the old guess-your-own-adventure version.
+- Added regression coverage for the tools/list schema shape, canonical op enumeration, unsupported-op refusal, and the newline-delimited MCP round trip that Codex actually uses.
+- Updated the public docs and release checklist to reflect the natural-language mapping and the current release-readiness checks. Small victory for ordinary nouns.
+
 ## 2026-04-29
 - Clarified the intended MCP host targets as Codex, OpenCode, and Hermes.
 - Cleaned repository ignore rules so generated MCP/test scratch output is ignored while `UPP_GUIDES/` remains visible as living documentation.

@@ -122,6 +122,11 @@ Minimal example:
 }
 ```
 
+Natural-language mapping:
+- `Replace beta with BETA in one file` becomes `op: replace_exact`, `find: beta`, `text: BETA`.
+- Hash the file first and pass the returned digest as `expected_sha256` when you want a guarded edit.
+- Use `session` as an object when you need stable host metadata or rollback tracing.
+
 ### `patchtrack_rollback`
 Required arguments:
 - `workspace_root`
@@ -166,7 +171,7 @@ Example:
 ```
 
 ## Supported Edit Operations
-Current edit operations:
+Current canonical edit operations:
 - `replace_exact`
 - `replace_all_exact`
 - `insert_before_exact`
@@ -178,6 +183,8 @@ Current edit operations:
 - `replace_between`
 - `replace_lines`
 - `ensure_include`
+
+PatchTrack keeps `replace_exact` as the canonical single-replacement operation name and uses `text` for the replacement content field. The MCP schema and examples intentionally avoid `replace` and `replace_text` so agents do not have to guess.
 
 ## Why Structured Edits Instead Of Freeform Patches
 PatchTrack deliberately prefers structured edit intents over raw patch text.

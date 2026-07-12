@@ -35,6 +35,8 @@ For each host, configure the binary from `integration/host_configs/` and keep th
 
 Repeat with a multi-file request and with an intentionally stale `expected_sha256` to confirm the host displays structured failure information instead of treating a refusal as success.
 
+For the normal single-file replace case, the host should naturally express the edit as `replace_exact` with the original text in `find` and the replacement in `text`. Anything else is usually a clue that the schema is trying too hard to be mysterious.
+
 ## Manual Failure Checks
 
 Use a disposable workspace, never a production checkout, for these checks:

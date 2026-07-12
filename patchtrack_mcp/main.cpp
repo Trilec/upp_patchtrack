@@ -203,6 +203,30 @@ bool RejectUnexpectedKeys(const Value& args, const Vector<String>& allowed, Stri
     return true;
 }
 
+bool ValidateSessionObject(const Value& args, String& error_json)
+{
+    Value session = args["session"];
+    if(IsNull(session))
+        return true;
+    if(!session.Is<ValueMap>()) {
+        error_json = BuildSimpleFailureJson("BAD_REQUEST", "Field 'session' must be an object.");
+        return false;
+    }
+
+    Vector<String> allowed;
+    allowed.Add("id");
+    allowed.Add("goal");
+    if(!RejectUnexpectedKeys(session, allowed, error_json))
+        return false;
+
+    String discard;
+    if(!ExpectStringField(session, "id", false, discard, error_json))
+        return false;
+    if(!ExpectStringField(session, "goal", false, discard, error_json))
+        return false;
+    return true;
+}
+
 bool ValidateEditItems(const Value& args, String& error_json)
 {
     Value edits = args["edits"];
@@ -251,7 +275,7 @@ bool ValidatePreviewApplyArgs(const Value& args, String& error_json)
         return false;
     if(!ExpectStringField(args, "actor", false, discard, error_json))
         return false;
-    if(!ExpectObjectField(args, "session", false, error_json))
+    if(!ValidateSessionObject(args, error_json))
         return false;
     if(!ExpectBoolField(args, "allow_suspicious", false, error_json))
         return false;
@@ -282,7 +306,7 @@ bool ValidateRollbackArgs(const Value& args, String& error_json)
         return false;
     if(!ExpectStringField(args, "actor", false, discard, error_json))
         return false;
-    if(!ExpectStringField(args, "session", false, discard, error_json))
+    if(!ValidateSessionObject(args, error_json))
         return false;
     return true;
 }
@@ -348,7 +372,7 @@ String BuildToolsListResult()
         "  \"tools\": [\n"
         "    {\n"
         "      \"name\": \"patchtrack_preview\",\n"
-        "      \"description\": \"Validate and diff a PatchTrack request without writing workspace files.\",\n"
+        "      \"description\": \"Hash every target file first, pass the hash as expected_sha256, use op replace_exact for an ordinary exact replacement, put the original text in find and the replacement content in text, and preview the diff without writing workspace files.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
         "        \"required\": [\"workspace_root\", \"edits\"],\n"
@@ -366,22 +390,19 @@ String BuildToolsListResult()
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
                 "              \"properties\": {\n"
-                "                \"op\": {\"type\": \"string\"},\n"
-        "                \"file\": {\"type\": \"string\"},\n"
-        "                \"find\": {\"type\": \"string\"},\n"
-        "                \"text\": {\"type\": \"string\"},\n"
-        "                \"replace\": {\"type\": \"string\"},\n"
-        "                \"new_text\": {\"type\": \"string\"},\n"
-        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n"
-        "                \"anchor\": {\"type\": \"string\"},\n"
-        "                \"start\": {\"type\": \"string\"},\n"
-        "                \"end\": {\"type\": \"string\"},\n"
-        "                \"include\": {\"type\": \"string\"},\n"
-        "                \"expected_sha256\": {\"type\": \"string\"},\n"
-        "                \"expected_hash\": {\"type\": \"string\"},\n"
-        "                \"start_line\": {\"type\": \"integer\"},\n"
-        "                \"end_line\": {\"type\": \"integer\"},\n"
-        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}\n"
+                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement. The canonical names here are the only supported PatchTrack operations.\"},\n"
+        "                \"file\": {\"type\": \"string\", \"description\": \"Workspace-relative file path.\"},\n"
+        "                \"find\": {\"type\": \"string\", \"description\": \"Original text to match exactly.\"},\n"
+        "                \"text\": {\"type\": \"string\", \"description\": \"Replacement content to write.\"},\n"
+        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Replacement lines for replace_lines.\"},\n"
+        "                \"anchor\": {\"type\": \"string\", \"description\": \"Exact anchor text for insert operations.\"},\n"
+        "                \"start\": {\"type\": \"string\", \"description\": \"Start anchor for replace_between.\"},\n"
+        "                \"end\": {\"type\": \"string\", \"description\": \"End anchor for replace_between.\"},\n"
+        "                \"include\": {\"type\": \"string\", \"description\": \"Line to ensure is present in a file.\"},\n"
+        "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+        "                \"start_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive start line for replace_lines.\"},\n"
+        "                \"end_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive end line for replace_lines.\"},\n"
+        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Validation substrings required in the selected line range.\"}\n"
                 "              },\n"
                 "              \"additionalProperties\": false\n"
         "            }\n"
@@ -392,7 +413,7 @@ String BuildToolsListResult()
         "    },\n"
         "    {\n"
         "      \"name\": \"patchtrack_apply\",\n"
-        "      \"description\": \"Apply a PatchTrack request transactionally with journaling and recovery data.\",\n"
+        "      \"description\": \"Hash every target file first, pass the hash as expected_sha256, use op replace_exact for an ordinary exact replacement, put the original text in find and the replacement content in text, preview first, then apply the reviewed transaction and use the returned transaction_id for rollback.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
         "        \"required\": [\"workspace_root\", \"edits\"],\n"
@@ -410,22 +431,19 @@ String BuildToolsListResult()
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
                 "              \"properties\": {\n"
-                "                \"op\": {\"type\": \"string\"},\n"
-        "                \"file\": {\"type\": \"string\"},\n"
-        "                \"find\": {\"type\": \"string\"},\n"
-        "                \"text\": {\"type\": \"string\"},\n"
-        "                \"replace\": {\"type\": \"string\"},\n"
-        "                \"new_text\": {\"type\": \"string\"},\n"
-        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}},\n"
-        "                \"anchor\": {\"type\": \"string\"},\n"
-        "                \"start\": {\"type\": \"string\"},\n"
-        "                \"end\": {\"type\": \"string\"},\n"
-        "                \"include\": {\"type\": \"string\"},\n"
-        "                \"expected_sha256\": {\"type\": \"string\"},\n"
-        "                \"expected_hash\": {\"type\": \"string\"},\n"
-        "                \"start_line\": {\"type\": \"integer\"},\n"
-        "                \"end_line\": {\"type\": \"integer\"},\n"
-        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}\n"
+                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement. The canonical names here are the only supported PatchTrack operations.\"},\n"
+        "                \"file\": {\"type\": \"string\", \"description\": \"Workspace-relative file path.\"},\n"
+        "                \"find\": {\"type\": \"string\", \"description\": \"Original text to match exactly.\"},\n"
+        "                \"text\": {\"type\": \"string\", \"description\": \"Replacement content to write.\"},\n"
+        "                \"new_lines\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Replacement lines for replace_lines.\"},\n"
+        "                \"anchor\": {\"type\": \"string\", \"description\": \"Exact anchor text for insert operations.\"},\n"
+        "                \"start\": {\"type\": \"string\", \"description\": \"Start anchor for replace_between.\"},\n"
+        "                \"end\": {\"type\": \"string\", \"description\": \"End anchor for replace_between.\"},\n"
+        "                \"include\": {\"type\": \"string\", \"description\": \"Line to ensure is present in a file.\"},\n"
+        "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+        "                \"start_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive start line for replace_lines.\"},\n"
+        "                \"end_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive end line for replace_lines.\"},\n"
+        "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Validation substrings required in the selected line range.\"}\n"
                 "              },\n"
                 "              \"additionalProperties\": false\n"
         "            }\n"

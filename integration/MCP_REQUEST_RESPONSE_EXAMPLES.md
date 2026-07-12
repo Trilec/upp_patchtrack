@@ -4,6 +4,11 @@ These examples show the raw JSON-RPC payloads PatchTrack expects over MCP stdio.
 
 MCP stdio uses newline-delimited UTF-8 JSON-RPC messages. Each request and response is one JSON object on one line; messages must not contain embedded newlines.
 
+Natural-language mapping:
+- `Replace beta with BETA in one file` maps to `op: replace_exact`, `find: beta`, `text: BETA`.
+- `expected_sha256` carries the guard hash from `patchtrack_hash`.
+- `replace` and `replace_text` are not canonical MCP operation names here.
+
 ## Initialize
 
 Request body:

@@ -173,6 +173,8 @@ Agents should prefer this flow:
 5. Use `patchtrack_rollback` for undo instead of writing reverse edits manually.
 6. Call `patchtrack_recovery_scan` if startup reports pending or recovery-required transactions.
 
+For a normal one-file text replacement, the canonical MCP shape is `op: replace_exact`, `find: <original text>`, `text: <replacement text>`. That keeps the host from inventing aliases that the engine never asked for.
+
 ## Troubleshooting
 
 If the host cannot start the server:

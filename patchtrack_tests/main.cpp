@@ -901,6 +901,52 @@ void TestMcpRoundTrip(Harness& h)
     String abs = AppendFileName(root, rel);
     Expect(h, WriteFileText(abs, "alpha\nbeta\n"), "mcp-roundtrip: failed to write seed file");
 
+    CommandResult tools_cmd = RunMcpRequest(h, root, String("{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"tools/list\"}"));
+    Value tools_rpc;
+    String tools_body_json;
+    if(!Expect(h, ParseMcpJsonResult(tools_cmd, tools_rpc, tools_body_json), "mcp-roundtrip: tools/list call failed: " + tools_cmd.out))
+        return;
+    Value tools = tools_rpc["result"]["tools"];
+    Expect(h, tools.GetCount() == 6, "mcp-roundtrip: tools/list should expose six tools");
+    Expect(h, tools_cmd.out.Find("\"replace_text\"") < 0, "mcp-roundtrip: tools/list should not advertise replace_text");
+    for(int i = 0; i < tools.GetCount(); i++) {
+        String name = (String)tools[i]["name"];
+        if(name == "patchtrack_preview" || name == "patchtrack_apply") {
+            Value op_schema = tools[i]["inputSchema"]["properties"]["edits"]["items"]["properties"]["op"];
+            Value op_enum = op_schema["enum"];
+            Expect(h, op_enum.GetCount() == 11, "mcp-roundtrip: op enum should list the canonical operations");
+            const char *ops[] = {
+                "replace_exact",
+                "replace_all_exact",
+                "insert_before_exact",
+                "insert_after_exact",
+                "insert_before_exact_line",
+                "insert_after_exact_line",
+                "delete_exact",
+                "rewrite_file",
+                "replace_between",
+                "replace_lines",
+                "ensure_include"
+            };
+            for(int j = 0; j < CountOf(ops); j++) {
+                bool found = false;
+                for(int k = 0; k < op_enum.GetCount(); k++) {
+                    if((String)op_enum[k] == ops[j]) {
+                        found = true;
+                        break;
+                    }
+                }
+                Expect(h, found, String("mcp-roundtrip: op enum missing ") + ops[j]);
+            }
+            Expect(h, String(op_schema["description"]).Find("replace_exact") >= 0,
+                   "mcp-roundtrip: op description should map ordinary replacements to replace_exact");
+            Expect(h, String(tools[i]["description"]).Find("replacement content in text") >= 0,
+                   "mcp-roundtrip: tool description should point agents to text");
+            Expect(h, String(tools[i]["inputSchema"]["properties"]["session"]["type"]) == "object",
+                   "mcp-roundtrip: session schema should be an object");
+        }
+    }
+
     String hash_body = BuildMcpToolCall(1, "patchtrack_hash", String("{\"path\":") + JString(abs) + "}");
     CommandResult hash_cmd = RunMcpRequest(h, root, hash_body);
     Value hash_rpc;
@@ -916,14 +962,28 @@ void TestMcpRoundTrip(Harness& h)
                  << "\"workspace_root\":" << JString(root) << ","
                  << "\"summary\":\"mcp preview\","
                  << "\"actor\":\"harness\","
-                 << "\"edits\":[{\"op\":\"replace_lines\",\"file\":" << JString(rel)
-                 << ",\"start_line\":2,\"end_line\":2,\"new_lines\":[\"gamma\"]}]"
+                 << "\"session\":{\"id\":\"sess-mcp-roundtrip\",\"goal\":\"replace beta with gamma\"},"
+                 << "\"edits\":[{\"op\":\"replace_exact\",\"file\":" << JString(rel)
+                 << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
                  << "}";
 
     String invalid_session_args = preview_args;
     invalid_session_args.Replace("\"actor\":\"harness\",", "\"actor\":\"harness\",\"session\":\"legacy-string\",");
     CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "patchtrack_preview", invalid_session_args));
     Expect(h, invalid_session_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: string session should be rejected");
+
+    String unsupported_args;
+    unsupported_args << "{"
+                     << "\"workspace_root\":" << JString(root) << ","
+                     << "\"summary\":\"unsupported op\","
+                     << "\"actor\":\"harness\","
+                     << "\"session\":{\"id\":\"sess-mcp-roundtrip\",\"goal\":\"replace beta with gamma\"},"
+                     << "\"edits\":[{\"op\":\"replace_text\",\"file\":" << JString(rel)
+                     << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
+                     << "}";
+    CommandResult unsupported_cmd = RunMcpRequest(h, root, BuildMcpToolCall(21, "patchtrack_preview", unsupported_args));
+    Expect(h, unsupported_cmd.out.Find("UNSUPPORTED_OP") >= 0, "mcp-roundtrip: replace_text should be rejected");
+    Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: unsupported op mutated file");
 
     CommandResult preview_cmd = RunMcpRequest(h, root, BuildMcpToolCall(2, "patchtrack_preview", preview_args));
     Value preview_rpc;
@@ -949,7 +1009,9 @@ void TestMcpRoundTrip(Harness& h)
            "mcp-roundtrip: apply did not report ok");
     Expect(h, LoadFile(abs).Find("gamma") >= 0, "mcp-roundtrip: apply did not update file");
 
-    String transaction_id = ExtractJsonStringField(apply_cmd.out, "transaction_id");
+    String transaction_id = (String)apply_rpc["result"]["structuredContent"]["transaction_id"];
+    if(transaction_id.IsEmpty())
+        transaction_id = ExtractJsonStringField(apply_cmd.out, "transaction_id");
     Expect(h, !transaction_id.IsEmpty(), "mcp-roundtrip: apply response missing transaction_id");
 
     String rollback_args;
@@ -965,10 +1027,10 @@ void TestMcpRoundTrip(Harness& h)
         return;
     Expect(h, rollback_cmd.out.Find("\"structuredContent\"") >= 0, "mcp-roundtrip: rollback structured content missing");
     Expect(h, rollback_cmd.out.Find("\"isError\": false") >= 0 || rollback_cmd.out.Find("\"isError\":false") >= 0,
-           "mcp-roundtrip: rollback reported MCP error");
+           "mcp-roundtrip: rollback reported MCP error: " + rollback_cmd.out);
     Expect(h, rollback_cmd.out.Find("\"ok\": true") >= 0 || rollback_cmd.out.Find("\"ok\":true") >= 0,
-           "mcp-roundtrip: rollback did not report ok");
-    Expect(h, LoadFile(abs).Find("beta") >= 0, "mcp-roundtrip: rollback did not restore file");
+           "mcp-roundtrip: rollback did not report ok: " + rollback_cmd.out);
+    Expect(h, LoadFile(abs).Find("beta") >= 0, "mcp-roundtrip: rollback did not restore file: " + LoadFile(abs));
 
     String scan_args = String("{\"workspace_root\":") + JString(root) + "}";
     CommandResult scan_cmd = RunMcpRequest(h, root, BuildMcpToolCall(5, "patchtrack_recovery_scan", scan_args));
