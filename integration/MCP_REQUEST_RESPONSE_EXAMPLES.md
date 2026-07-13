@@ -6,7 +6,7 @@ MCP stdio uses newline-delimited UTF-8 JSON-RPC messages. Each request and respo
 
 Natural-language mapping:
 - `Replace beta with BETA in one file` maps to `op: replace_exact`, `find: beta`, `text: BETA`.
-- `expected_sha256` carries the guard hash from `patchtrack_hash`.
+- `expected_sha256` carries the guard hash from `hash`.
 - `replace` and `replace_text` are not canonical MCP operation names here.
 
 ## Initialize
@@ -60,12 +60,12 @@ Expected response includes these tool names:
   "id": 2,
   "result": {
     "tools": [
-      {"name": "patchtrack_preview"},
-      {"name": "patchtrack_apply"},
-      {"name": "patchtrack_rollback"},
-      {"name": "patchtrack_hash"},
-      {"name": "patchtrack_history"},
-      {"name": "patchtrack_recovery_scan"}
+      {"name": "preview"},
+      {"name": "apply"},
+      {"name": "rollback"},
+      {"name": "hash"},
+      {"name": "history"},
+      {"name": "recovery_scan"}
     ]
   }
 }
@@ -83,7 +83,7 @@ Request body:
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "patchtrack_hash",
+    "name": "hash",
     "arguments": {
       "path": "E:\\apps\\github\\upp_patchtrack\\examples\\sample.txt"
     }
@@ -124,7 +124,7 @@ Request body:
   "id": 4,
   "method": "tools/call",
   "params": {
-    "name": "patchtrack_preview",
+    "name": "preview",
     "arguments": {
       "workspace_root": "E:\\apps\\github\\myrepo",
       "summary": "replace beta with gamma",
@@ -175,7 +175,7 @@ Apply uses the same arguments as preview, but the tool name changes:
   "id": 5,
   "method": "tools/call",
   "params": {
-    "name": "patchtrack_apply",
+    "name": "apply",
     "arguments": {
       "workspace_root": "E:\\apps\\github\\myrepo",
       "summary": "replace beta with gamma",
@@ -206,7 +206,7 @@ Request body:
   "id": 6,
   "method": "tools/call",
   "params": {
-    "name": "patchtrack_rollback",
+    "name": "rollback",
     "arguments": {
       "workspace_root": "E:\\apps\\github\\myrepo",
       "transaction_id": "tran-xxxxxxxxxx",
@@ -229,7 +229,7 @@ Request body:
   "id": 7,
   "method": "tools/call",
   "params": {
-    "name": "patchtrack_recovery_scan",
+    "name": "recovery_scan",
     "arguments": {
       "workspace_root": "E:\\apps\\github\\myrepo"
     }
@@ -238,3 +238,4 @@ Request body:
 ```
 
 Agents should call this on startup or after a failed edit session when `.patchtrack` may contain pending or recovery-required records.
+The structured result also reports `temporary_artifacts`, so hosts can confirm whether any `.patchtrack-tmp-*` files remain without doing an extra directory walk.

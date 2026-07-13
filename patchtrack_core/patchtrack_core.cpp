@@ -1483,6 +1483,7 @@ struct RecoveryScanInfo : Moveable<RecoveryScanInfo> {
     Vector<SessionClaimInfo> stale_claims;
     Vector<String> pending_transactions;
     Vector<String> recovery_required_transactions;
+    Vector<String> temporary_artifacts;
 };
 
 String BuildJsonStringArray(const Vector<String>& items);
@@ -1629,6 +1630,18 @@ String BuildClaimArrayJson(const Vector<SessionClaimInfo>& claims)
     return out;
 }
 
+void CollectTemporaryArtifacts(const String& dir, Vector<String>& artifacts)
+{
+    FindFile ff(AppendFileName(dir, "*"));
+    while(ff) {
+        if(ff.IsFile() && ff.GetName().Find(".patchtrack-tmp-") >= 0)
+            artifacts.Add(AppendFileName(dir, ff.GetName()));
+        else if(ff.IsFolder() && ff.GetName() != "." && ff.GetName() != "..")
+            CollectTemporaryArtifacts(AppendFileName(dir, ff.GetName()), artifacts);
+        ff.Next();
+    }
+}
+
 String BuildRecoveryScanJson(const RecoveryScanInfo& scan)
 {
     String out;
@@ -1637,7 +1650,8 @@ String BuildRecoveryScanJson(const RecoveryScanInfo& scan)
         << "  \"active_claims\": " << BuildClaimArrayJson(scan.active_claims) << ",\n"
         << "  \"stale_claims\": " << BuildClaimArrayJson(scan.stale_claims) << ",\n"
         << "  \"pending_transactions\": " << BuildJsonStringArray(scan.pending_transactions) << ",\n"
-        << "  \"recovery_required_transactions\": " << BuildJsonStringArray(scan.recovery_required_transactions) << "\n"
+        << "  \"recovery_required_transactions\": " << BuildJsonStringArray(scan.recovery_required_transactions) << ",\n"
+        << "  \"temporary_artifacts\": " << BuildJsonStringArray(scan.temporary_artifacts) << "\n"
         << "}";
     return out;
 }
@@ -1680,6 +1694,8 @@ bool RunStartupRecoveryScan(const String& root,
             ff.Next();
         }
     }
+
+    CollectTemporaryArtifacts(root, scan.temporary_artifacts);
 
     FindFile sess(AppendFileName(journal, "sess-*"));
     while(sess) {

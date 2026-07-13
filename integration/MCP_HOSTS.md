@@ -132,6 +132,18 @@ E:\apps\github\upp_patchtrack\build\patchtrack_mcp.exe
 
 Keep args empty.
 
+Recommended OpenCode permissions:
+
+```json
+{
+  "patchtrack_*": "allow",
+  "patchtrack_apply": "ask",
+  "patchtrack_rollback": "ask"
+}
+```
+
+The specific `ask` rules should override the broad allow rule. If the host does anything more creative than that, it is inventing policy instead of following it.
+
 The older `integration/opencode_patchtrack_command.md` file describes a command-prompt workflow. Prefer the MCP server once OpenCode is configured for MCP.
 
 ## Hermes
@@ -155,23 +167,25 @@ Keep args empty.
 ## Exposed Tools
 
 The MCP server currently exposes:
-- `patchtrack_preview`
-- `patchtrack_apply`
-- `patchtrack_rollback`
-- `patchtrack_hash`
-- `patchtrack_history`
-- `patchtrack_recovery_scan`
+- `preview`
+- `apply`
+- `rollback`
+- `hash`
+- `history`
+- `recovery_scan`
+
+Hosts may show a server prefix such as `patchtrack_hash`, but the server-local names above are the canonical MCP surface.
 
 ## Agent Usage Rule
 
 Agents should prefer this flow:
 
-1. Call `patchtrack_hash` for every target file.
-2. Call `patchtrack_preview` with structured edits.
+1. Call `hash` for every target file.
+2. Call `preview` with structured edits.
 3. Inspect `structuredContent.ok`, `files`, and diff content.
-4. Call `patchtrack_apply` only after preview is correct.
-5. Use `patchtrack_rollback` for undo instead of writing reverse edits manually.
-6. Call `patchtrack_recovery_scan` if startup reports pending or recovery-required transactions.
+4. Call `apply` only after preview is correct.
+5. Use `rollback` for undo instead of writing reverse edits manually.
+6. Call `recovery_scan` if startup reports pending or recovery-required transactions.
 
 For a normal one-file text replacement, the canonical MCP shape is `op: replace_exact`, `find: <original text>`, `text: <replacement text>`. That keeps the host from inventing aliases that the engine never asked for.
 If you supply `session.id`, keep the prefix `sess-` so rollback and recovery can find the journal tree later.

@@ -57,8 +57,8 @@ try {
     if($initialize -notmatch 'patchtrack_mcp') {
         throw "initialize response did not identify patchtrack_mcp."
     }
-    if($tools -notmatch 'patchtrack_apply') {
-        throw "tools/list response did not expose patchtrack_apply."
+    if($tools -notmatch '"name"\s*:\s*"apply"') {
+        throw "tools/list response did not expose apply."
     }
     if($process.HasExited) {
         throw "MCP server exited between requests."

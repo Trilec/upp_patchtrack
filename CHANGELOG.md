@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-13
+- Renamed the canonical MCP surface to local tool names (`preview`, `apply`, `rollback`, `hash`, `history`, `recovery_scan`) while keeping host-side prefixes as display noise only. The host can keep its theatre; the wire format stays sane.
+- Added tool annotations for read-only, destructive, and idempotent hints, plus compatibility handling for prefixed tool calls so OpenCode does not have to relearn basic manners mid-release.
+- Extended recovery scan output with structured temporary-artifact reporting so hosts can confirm `.patchtrack-tmp-*` cleanup without rummaging through directories like they pay rent there.
+- Updated docs, examples, smoke tests, and release checklist to use the canonical names and the recommended OpenCode permission split.
+
 ## 2026-07-12
 - Tightened the MCP frontend schema so the canonical edit vocabulary is explicit, `session` is validated as an object with a `sess-` prefix rule, and the tool descriptions point agents at `replace_exact` and `text` instead of the old guess-your-own-adventure version.
 - Bumped the advertised MCP initialize version to `1.0.0` and added a regression check for it. First public release, less mystery meat.

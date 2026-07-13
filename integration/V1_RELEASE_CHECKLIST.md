@@ -29,11 +29,11 @@ For each host, configure the binary from `integration/host_configs/` and keep th
 
 1. Start a new host session.
 2. Confirm `patchtrack` appears in the available MCP servers/tools.
-3. Call `patchtrack_hash` on a disposable file.
-4. Call `patchtrack_preview` and confirm the file is unchanged.
-5. Call `patchtrack_apply` and confirm the file changed and a `transaction_id` was returned.
-6. Call `patchtrack_rollback` and confirm the original content returned.
-7. Call `patchtrack_recovery_scan` and confirm it reports no pending recovery work.
+3. Call `hash` on a disposable file.
+4. Call `preview` and confirm the file is unchanged.
+5. Call `apply` and confirm the file changed and a `transaction_id` was returned.
+6. Call `rollback` and confirm the original content returned.
+7. Call `recovery_scan` and confirm it reports no pending recovery work.
 
 Repeat with a multi-file request and with an intentionally stale `expected_sha256` to confirm the host displays structured failure information instead of treating a refusal as success.
 

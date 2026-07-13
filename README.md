@@ -77,12 +77,14 @@ Raw request/response examples live in `integration/MCP_REQUEST_RESPONSE_EXAMPLES
 The v1 acceptance procedure lives in `integration/V1_RELEASE_CHECKLIST.md`.
 
 Current MCP tools:
-- `patchtrack_preview`
-- `patchtrack_apply`
-- `patchtrack_rollback`
-- `patchtrack_hash`
-- `patchtrack_history`
-- `patchtrack_recovery_scan`
+- `preview`
+- `apply`
+- `rollback`
+- `hash`
+- `history`
+- `recovery_scan`
+
+Hosts may display these with a server prefix such as `patchtrack_hash`; that prefix is host-side decoration, not part of the canonical MCP tool name.
 
 The MCP server speaks JSON-RPC 2.0 and returns tool results with both plain text content and `structuredContent`, so agents can read a human-friendly result while still consuming structured engine data.
 
@@ -93,7 +95,7 @@ Current helper modes:
 `--oneshot` exists mainly for harness-driven integration testing.
 
 ## MCP Tool Usage
-### `patchtrack_preview` and `patchtrack_apply`
+### `preview` and `apply`
 Required arguments:
 - `workspace_root`
 - `edits`
@@ -128,7 +130,7 @@ Natural-language mapping:
 - Hash the file first and pass the returned digest as `expected_sha256` when you want a guarded edit.
 - Use `session` as an object when you need stable host metadata or rollback tracing, and give `session.id` a `sess-` prefix.
 
-### `patchtrack_rollback`
+### `rollback`
 Required arguments:
 - `workspace_root`
 - `transaction_id`
@@ -147,7 +149,7 @@ Example:
 }
 ```
 
-### `patchtrack_hash`
+### `hash`
 Required arguments:
 - `path`
 
@@ -159,7 +161,7 @@ Example:
 }
 ```
 
-### `patchtrack_history` and `patchtrack_recovery_scan`
+### `history` and `recovery_scan`
 Required arguments:
 - `workspace_root`
 

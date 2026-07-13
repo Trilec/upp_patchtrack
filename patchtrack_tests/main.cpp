@@ -908,10 +908,40 @@ void TestMcpRoundTrip(Harness& h)
         return;
     Value tools = tools_rpc["result"]["tools"];
     Expect(h, tools.GetCount() == 6, "mcp-roundtrip: tools/list should expose six tools");
+    Expect(h, tools_cmd.out.Find("patchtrack_hash") < 0, "mcp-roundtrip: tools/list should not advertise host-prefixed names");
     Expect(h, tools_cmd.out.Find("\"replace_text\"") < 0, "mcp-roundtrip: tools/list should not advertise replace_text");
+    const char *expected_tools[] = { "preview", "apply", "rollback", "hash", "history", "recovery_scan" };
+    for(int i = 0; i < CountOf(expected_tools); i++) {
+        bool found = false;
+        for(int j = 0; j < tools.GetCount(); j++) {
+            if((String)tools[j]["name"] == expected_tools[i]) {
+                found = true;
+                Value annotations = tools[j]["annotations"];
+                if(String(expected_tools[i]) == "preview") {
+                    Expect(h, (bool)annotations["readOnlyHint"], "mcp-roundtrip: preview should be annotated read-only");
+                    Expect(h, (bool)annotations["idempotentHint"], "mcp-roundtrip: preview should be annotated idempotent");
+                    Expect(h, !(bool)annotations["destructiveHint"], "mcp-roundtrip: preview should not be destructive");
+                }
+                else if(String(expected_tools[i]) == "apply" || String(expected_tools[i]) == "rollback") {
+                    Expect(h, !(bool)annotations["readOnlyHint"], String("mcp-roundtrip: ") + expected_tools[i] + " should not be annotated read-only");
+                    Expect(h, (bool)annotations["destructiveHint"], String("mcp-roundtrip: ") + expected_tools[i] + " should be annotated destructive");
+                }
+                else if(String(expected_tools[i]) == "hash" || String(expected_tools[i]) == "history") {
+                    Expect(h, (bool)annotations["readOnlyHint"], String("mcp-roundtrip: ") + expected_tools[i] + " should be annotated read-only");
+                    Expect(h, (bool)annotations["idempotentHint"], String("mcp-roundtrip: ") + expected_tools[i] + " should be annotated idempotent");
+                }
+                else if(String(expected_tools[i]) == "recovery_scan") {
+                    Expect(h, !(bool)annotations["readOnlyHint"], "mcp-roundtrip: recovery_scan should not be annotated read-only");
+                    Expect(h, (bool)annotations["idempotentHint"], "mcp-roundtrip: recovery_scan should be annotated idempotent");
+                }
+                break;
+            }
+        }
+        Expect(h, found, String("mcp-roundtrip: tools/list missing ") + expected_tools[i]);
+    }
     for(int i = 0; i < tools.GetCount(); i++) {
         String name = (String)tools[i]["name"];
-        if(name == "patchtrack_preview" || name == "patchtrack_apply") {
+        if(name == "preview" || name == "apply") {
             Value op_schema = tools[i]["inputSchema"]["properties"]["edits"]["items"]["properties"]["op"];
             Value op_enum = op_schema["enum"];
             Expect(h, op_enum.GetCount() == 11, "mcp-roundtrip: op enum should list the canonical operations");
@@ -947,7 +977,7 @@ void TestMcpRoundTrip(Harness& h)
         }
     }
 
-    String hash_body = BuildMcpToolCall(1, "patchtrack_hash", String("{\"path\":") + JString(abs) + "}");
+    String hash_body = BuildMcpToolCall(1, "hash", String("{\"path\":") + JString(abs) + "}");
     CommandResult hash_cmd = RunMcpRequest(h, root, hash_body);
     Value hash_rpc;
     String hash_body_json;
@@ -979,7 +1009,7 @@ void TestMcpRoundTrip(Harness& h)
     int string_session_key_first = invalid_session_string_args.Find("\"session\"");
     Expect(h, string_session_key_first >= 0 && string_session_key_first == invalid_session_string_args.ReverseFind("\"session\""),
            "mcp-roundtrip: string session request should contain exactly one session key");
-    CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "patchtrack_preview", invalid_session_string_args));
+    CommandResult invalid_session_cmd = RunMcpRequest(h, root, BuildMcpToolCall(20, "preview", invalid_session_string_args));
     Expect(h, invalid_session_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: string session should be rejected");
     Expect(h, invalid_session_cmd.out.Find("must be an object") >= 0, "mcp-roundtrip: string session should mention object");
     Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: string session mutation leaked through");
@@ -996,7 +1026,7 @@ void TestMcpRoundTrip(Harness& h)
     int prefix_session_key_first = invalid_session_prefix_args.Find("\"session\"");
     Expect(h, prefix_session_key_first >= 0 && prefix_session_key_first == invalid_session_prefix_args.ReverseFind("\"session\""),
            "mcp-roundtrip: prefixed-session request should contain exactly one session key");
-    CommandResult invalid_prefix_cmd = RunMcpRequest(h, root, BuildMcpToolCall(21, "patchtrack_preview", invalid_session_prefix_args));
+    CommandResult invalid_prefix_cmd = RunMcpRequest(h, root, BuildMcpToolCall(21, "preview", invalid_session_prefix_args));
     Expect(h, invalid_prefix_cmd.out.Find("BAD_REQUEST") >= 0, "mcp-roundtrip: unprefixed session id should be rejected");
     Expect(h, invalid_prefix_cmd.out.Find("sess-") >= 0, "mcp-roundtrip: unprefixed session id should mention sess-");
     Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: unprefixed session mutation leaked through");
@@ -1010,11 +1040,11 @@ void TestMcpRoundTrip(Harness& h)
                      << "\"edits\":[{\"op\":\"replace_text\",\"file\":" << JString(rel)
                      << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
                      << "}";
-    CommandResult unsupported_cmd = RunMcpRequest(h, root, BuildMcpToolCall(22, "patchtrack_preview", unsupported_args));
+    CommandResult unsupported_cmd = RunMcpRequest(h, root, BuildMcpToolCall(22, "preview", unsupported_args));
     Expect(h, unsupported_cmd.out.Find("UNSUPPORTED_OP") >= 0, "mcp-roundtrip: replace_text should be rejected");
     Expect(h, LoadFile(abs) == "alpha\nbeta\n", "mcp-roundtrip: unsupported op mutated file");
 
-    CommandResult preview_cmd = RunMcpRequest(h, root, BuildMcpToolCall(2, "patchtrack_preview", preview_args));
+    CommandResult preview_cmd = RunMcpRequest(h, root, BuildMcpToolCall(2, "preview", preview_args));
     Value preview_rpc;
     String preview_body_json;
     if(!Expect(h, ParseMcpJsonResult(preview_cmd, preview_rpc, preview_body_json), "mcp-roundtrip: preview call failed: " + preview_cmd.out))
@@ -1026,7 +1056,7 @@ void TestMcpRoundTrip(Harness& h)
            "mcp-roundtrip: preview did not report ok");
     Expect(h, LoadFile(abs).Find("beta") >= 0, "mcp-roundtrip: preview mutated file");
 
-    CommandResult apply_cmd = RunMcpRequest(h, root, BuildMcpToolCall(3, "patchtrack_apply", preview_args));
+    CommandResult apply_cmd = RunMcpRequest(h, root, BuildMcpToolCall(3, "apply", preview_args));
     Value apply_rpc;
     String apply_body_json;
     if(!Expect(h, ParseMcpJsonResult(apply_cmd, apply_rpc, apply_body_json), "mcp-roundtrip: apply call failed: " + apply_cmd.out))
@@ -1049,7 +1079,7 @@ void TestMcpRoundTrip(Harness& h)
                   << "\"transaction_id\":" << JString(transaction_id) << ","
                   << "\"actor\":\"harness\""
                   << "}";
-    CommandResult rollback_cmd = RunMcpRequest(h, root, BuildMcpToolCall(4, "patchtrack_rollback", rollback_args));
+    CommandResult rollback_cmd = RunMcpRequest(h, root, BuildMcpToolCall(4, "rollback", rollback_args));
     Value rollback_rpc;
     String rollback_body_json;
     if(!Expect(h, ParseMcpJsonResult(rollback_cmd, rollback_rpc, rollback_body_json), "mcp-roundtrip: rollback call failed: " + rollback_cmd.out))
@@ -1062,7 +1092,7 @@ void TestMcpRoundTrip(Harness& h)
     Expect(h, LoadFile(abs).Find("beta") >= 0, "mcp-roundtrip: rollback did not restore file: " + LoadFile(abs));
 
     String scan_args = String("{\"workspace_root\":") + JString(root) + "}";
-    CommandResult scan_cmd = RunMcpRequest(h, root, BuildMcpToolCall(5, "patchtrack_recovery_scan", scan_args));
+    CommandResult scan_cmd = RunMcpRequest(h, root, BuildMcpToolCall(5, "recovery_scan", scan_args));
     Value scan_rpc;
     String scan_body_json;
     if(!Expect(h, ParseMcpJsonResult(scan_cmd, scan_rpc, scan_body_json), "mcp-roundtrip: recovery scan call failed: " + scan_cmd.out))
@@ -1072,6 +1102,9 @@ void TestMcpRoundTrip(Harness& h)
            "mcp-roundtrip: recovery scan reported MCP error");
     Expect(h, scan_cmd.out.Find("\"ok\": true") >= 0 || scan_cmd.out.Find("\"ok\":true") >= 0,
            "mcp-roundtrip: recovery scan did not report ok");
+    Value scan_structured = scan_rpc["result"]["structuredContent"];
+    Expect(h, scan_structured["scan"]["temporary_artifacts"].GetCount() == 0,
+           "mcp-roundtrip: recovery scan should report no temporary artifacts in a clean workspace");
 }
 
 void TestTransportBenchmark(Harness& h)
@@ -1131,7 +1164,7 @@ void TestTransportBenchmark(Harness& h)
              << "\"edits\":[{\"op\":\"replace_exact\",\"file\":" << JString(rel)
              << ",\"find\":\"beta\\n\",\"text\":\"gamma\\n\",\"expected_sha256\":" << JString(sha) << "}]"
              << "}";
-    String mcp_body = BuildMcpToolCall(99, "patchtrack_preview", mcp_args);
+    String mcp_body = BuildMcpToolCall(99, "preview", mcp_args);
     TimeStop mcp_oneshot_timer;
     for(int i = 0; i < iterations; i++) {
         Value rpc;

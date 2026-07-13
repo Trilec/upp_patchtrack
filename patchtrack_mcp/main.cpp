@@ -125,6 +125,18 @@ String BuildToolResult(const String& structured_json, bool is_error)
     return out;
 }
 
+String JsonBool(bool value)
+{
+    return value ? "true" : "false";
+}
+
+String NormalizeToolName(String tool_name)
+{
+    while(tool_name.StartsWith("patchtrack_"))
+        tool_name = tool_name.Mid(11);
+    return tool_name;
+}
+
 bool ExpectMap(const Value& v, const char *label, String& error_json)
 {
     if(v.Is<ValueMap>())
@@ -371,7 +383,12 @@ String BuildToolsListResult()
         "{\n"
         "  \"tools\": [\n"
         "    {\n"
-        "      \"name\": \"patchtrack_preview\",\n"
+        "      \"name\": \"preview\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": true,\n"
+        "        \"destructiveHint\": false,\n"
+        "        \"idempotentHint\": true\n"
+        "      },\n"
         "      \"description\": \"Hash every target file first, pass the hash as expected_sha256, use op replace_exact for an ordinary exact replacement, put the original text in find and the replacement content in text, and preview the diff without writing workspace files.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -412,7 +429,12 @@ String BuildToolsListResult()
         "      }\n"
         "    },\n"
         "    {\n"
-        "      \"name\": \"patchtrack_apply\",\n"
+        "      \"name\": \"apply\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": false,\n"
+        "        \"destructiveHint\": true,\n"
+        "        \"idempotentHint\": false\n"
+        "      },\n"
         "      \"description\": \"Hash every target file first, pass the hash as expected_sha256, use op replace_exact for an ordinary exact replacement, put the original text in find and the replacement content in text, preview first, then apply the reviewed transaction and use the returned transaction_id for rollback.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -453,7 +475,12 @@ String BuildToolsListResult()
         "      }\n"
         "    },\n"
         "    {\n"
-        "      \"name\": \"patchtrack_rollback\",\n"
+        "      \"name\": \"rollback\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": false,\n"
+        "        \"destructiveHint\": true,\n"
+        "        \"idempotentHint\": false\n"
+        "      },\n"
         "      \"description\": \"Roll back a recorded PatchTrack transaction when rollback preconditions still hold.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -468,7 +495,12 @@ String BuildToolsListResult()
         "      }\n"
         "    },\n"
         "    {\n"
-        "      \"name\": \"patchtrack_hash\",\n"
+        "      \"name\": \"hash\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": true,\n"
+        "        \"destructiveHint\": false,\n"
+        "        \"idempotentHint\": true\n"
+        "      },\n"
         "      \"description\": \"Return the SHA-256 of a file.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -480,7 +512,12 @@ String BuildToolsListResult()
         "      }\n"
         "    },\n"
         "    {\n"
-        "      \"name\": \"patchtrack_history\",\n"
+        "      \"name\": \"history\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": true,\n"
+        "        \"destructiveHint\": false,\n"
+        "        \"idempotentHint\": true\n"
+        "      },\n"
         "      \"description\": \"List stored transaction history for a workspace.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -492,7 +529,12 @@ String BuildToolsListResult()
         "      }\n"
         "    },\n"
         "    {\n"
-        "      \"name\": \"patchtrack_recovery_scan\",\n"
+        "      \"name\": \"recovery_scan\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": false,\n"
+        "        \"destructiveHint\": false,\n"
+        "        \"idempotentHint\": true\n"
+        "      },\n"
         "      \"description\": \"Run the startup recovery scan for a workspace and report stale claims or pending transactions.\",\n"
         "      \"inputSchema\": {\n"
         "        \"type\": \"object\",\n"
@@ -509,29 +551,32 @@ String BuildToolsListResult()
 
 bool ValidateToolCall(const String& tool_name, const Value& args, String& error_json)
 {
-    if(tool_name == "patchtrack_preview" || tool_name == "patchtrack_apply")
+    String name = NormalizeToolName(tool_name);
+
+    if(name == "preview" || name == "apply")
         return ValidatePreviewApplyArgs(args, error_json);
-    if(tool_name == "patchtrack_rollback")
+    if(name == "rollback")
         return ValidateRollbackArgs(args, error_json);
-    if(tool_name == "patchtrack_hash")
+    if(name == "hash")
         return ValidateSingleStringArg(args, "path", error_json);
-    if(tool_name == "patchtrack_history" || tool_name == "patchtrack_recovery_scan")
+    if(name == "history" || name == "recovery_scan")
         return ValidateSingleStringArg(args, "workspace_root", error_json);
     return true;
 }
 
 bool RunCoreRequestTool(const String& tool_name, const Value& args, String& result_json, bool& is_error)
 {
+    String name = NormalizeToolName(tool_name);
     String error;
     bool ok = false;
 
-    if(tool_name == "patchtrack_preview")
+    if(name == "preview")
         ok = PatchtrackPreview(args, result_json, error);
-    else if(tool_name == "patchtrack_apply")
+    else if(name == "apply")
         ok = PatchtrackApply(args, result_json, error);
-    else if(tool_name == "patchtrack_rollback")
+    else if(name == "rollback")
         ok = PatchtrackRollback(args, result_json, error);
-    else if(tool_name == "patchtrack_recovery_scan") {
+    else if(name == "recovery_scan") {
         String workspace_root;
         if(!ExpectStringField(args, "workspace_root", true, workspace_root, result_json)) {
             is_error = true;
@@ -542,7 +587,7 @@ bool RunCoreRequestTool(const String& tool_name, const Value& args, String& resu
     else
         return false;
 
-    if(!ok && tool_name != "patchtrack_preview") {
+    if(!ok && name != "preview") {
         result_json = PatchtrackFormatErrorJson(error);
         is_error = true;
     }
@@ -553,10 +598,11 @@ bool RunCoreRequestTool(const String& tool_name, const Value& args, String& resu
 
 bool RunHashOrHistoryTool(const String& tool_name, const Value& args, String& result_json, bool& is_error)
 {
+    String name = NormalizeToolName(tool_name);
     String text;
     String error;
 
-    if(tool_name == "patchtrack_hash") {
+    if(name == "hash") {
         String path;
         if(!ExpectStringField(args, "path", true, path, result_json)) {
             is_error = true;
@@ -572,7 +618,7 @@ bool RunHashOrHistoryTool(const String& tool_name, const Value& args, String& re
         return true;
     }
 
-    if(tool_name == "patchtrack_history") {
+    if(name == "history") {
         String workspace_root;
         if(!ExpectStringField(args, "workspace_root", true, workspace_root, result_json)) {
             is_error = true;
@@ -600,6 +646,7 @@ bool HandleToolCall(const Value& params, String& result_json)
     }
 
     String tool_name = (String)tool_name_value;
+    String normalized_tool_name = NormalizeToolName(tool_name);
     Value args = params["arguments"];
     if(IsNull(args))
         args = Value(ValueMap());
@@ -612,13 +659,13 @@ bool HandleToolCall(const Value& params, String& result_json)
 
     String tool_json;
     bool is_error = false;
-    if(RunCoreRequestTool(tool_name, args, tool_json, is_error) ||
-       RunHashOrHistoryTool(tool_name, args, tool_json, is_error)) {
+    if(RunCoreRequestTool(normalized_tool_name, args, tool_json, is_error) ||
+       RunHashOrHistoryTool(normalized_tool_name, args, tool_json, is_error)) {
         result_json = BuildToolResult(tool_json, is_error);
         return true;
     }
 
-    result_json = BuildToolResult(BuildSimpleFailureJson("UNKNOWN_TOOL", "Unknown PatchTrack MCP tool: " + tool_name), true);
+    result_json = BuildToolResult(BuildSimpleFailureJson("UNKNOWN_TOOL", "Unknown PatchTrack MCP tool: " + normalized_tool_name), true);
     return true;
 }
 
@@ -855,7 +902,9 @@ int RunSelfTest()
     Value list = ParseJSON("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n");
     Expect(st, HandleJsonRpcRequest(list, response, has_response), "tools/list dispatch failed");
     Expect(st, has_response, "tools/list should respond");
-    Expect(st, response.Find("patchtrack_apply") >= 0, "tools/list missing patchtrack_apply");
+    Expect(st, response.Find("\"name\": \"apply\"") >= 0, "tools/list missing apply");
+    Expect(st, response.Find("patchtrack_apply") < 0, "tools/list should not advertise host-prefixed names");
+    Expect(st, response.Find("\"readOnlyHint\": false") >= 0, "tools/list missing annotations");
     Expect(st, response.Find("transaction_id") >= 0, "tools/list missing tighter rollback schema");
 
     String root = AppendFileName(GetCurrentDirectory(), "_mcp_selftest");
@@ -865,7 +914,7 @@ int RunSelfTest()
 
     String hash_call;
     hash_call << "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{"
-              << "\"name\":\"patchtrack_hash\",\"arguments\":{\"path\":" << JString(path) << "}}}";
+              << "\"name\":\"hash\",\"arguments\":{\"path\":" << JString(path) << "}}}";
     Value hash_req = ParseJSON(hash_call);
     Expect(st, HandleJsonRpcRequest(hash_req, response, has_response), "hash tool dispatch failed");
     Expect(st, has_response, "hash tool should respond");
@@ -873,7 +922,7 @@ int RunSelfTest()
 
     String preview_call;
     preview_call << "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{"
-                 << "\"name\":\"patchtrack_preview\",\"arguments\":{"
+                 << "\"name\":\"preview\",\"arguments\":{"
                  << "\"workspace_root\":" << JString(root) << ","
                  << "\"summary\":\"preview smoke\","
                  << "\"actor\":\"mcp-selftest\","
@@ -886,7 +935,19 @@ int RunSelfTest()
     Expect(st, response.Find("\"ok\": true") >= 0 || response.Find("\"ok\":true") >= 0,
            "preview tool response missing ok flag");
 
-    String bad_hash_call = "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"patchtrack_hash\",\"arguments\":{\"path\":\"x\",\"extra\":1}}}";
+    String compat_call;
+    compat_call << "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
+                << "\"name\":\"patchtrack_preview\",\"arguments\":{"
+                << "\"workspace_root\":" << JString(root) << ","
+                << "\"summary\":\"preview smoke\","
+                << "\"actor\":\"mcp-selftest\","
+                << "\"edits\":[{\"op\":\"replace_exact\",\"file\":\"hash.txt\",\"find\":\"beta\\n\",\"text\":\"gamma\\n\"}]"
+                << "}}}";
+    Value compat_req = ParseJSON(compat_call);
+    Expect(st, HandleJsonRpcRequest(compat_req, response, has_response), "compat preview tool dispatch failed");
+    Expect(st, has_response, "compat preview tool should respond");
+
+    String bad_hash_call = "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"hash\",\"arguments\":{\"path\":\"x\",\"extra\":1}}}";
     Value bad_hash_req = ParseJSON(bad_hash_call);
     Expect(st, HandleJsonRpcRequest(bad_hash_req, response, has_response), "bad hash tool dispatch failed");
     Expect(st, response.Find("BAD_REQUEST") >= 0, "bad hash call did not reject unexpected field");
