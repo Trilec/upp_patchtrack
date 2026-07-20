@@ -19,7 +19,7 @@ Expected results:
 - `selftest: ok`
 - `mcp-selftest: ok`
 - `protocol-tests: ok`
-- `Passed: 24`, `Failed: 0`
+- `Passed: 25`, `Failed: 0`
 - `mcp-stdio-smoke: ok`
 
 The protocol harness covers preview no-write behavior, exact and anchor edits, validation failures, transaction snapshots, commit precondition re-checks, rollback blocking and recovery, injected write and journal failures, permission and disk-full diagnostics, stale claims, startup recovery, abrupt host termination, 1,000-edit batches, 1,000 sequential transactions, MCP round trips, and transport cost.

@@ -343,12 +343,19 @@ Vector<String> SplitLinesKeepEmpty(const String& s)
     int start = 0;
     for(int i = 0; i < s.GetLength(); i++) {
         if(s[i] == '\n') {
-            out.Add(s.Mid(start, i - start));
+            int length = i - start;
+            if(length > 0 && s[i - 1] == '\r')
+                length--;
+            out.Add(s.Mid(start, length));
             start = i + 1;
         }
     }
-    if(start < s.GetLength() || !EndsWithChar(s, '\n'))
-        out.Add(s.Mid(start));
+    if(start < s.GetLength() || (s.GetLength() > 0 && !EndsWithChar(s, '\n'))) {
+        int length = s.GetLength() - start;
+        if(length > 0 && s[s.GetLength() - 1] == '\r')
+            length--;
+        out.Add(s.Mid(start, length));
+    }
     return out;
 }
 
@@ -384,8 +391,15 @@ DiffResult BuildDiffResult(const String& path, const String& before, const Strin
     Vector<String> a = SplitLinesKeepEmpty(before);
     Vector<String> b = SplitLinesKeepEmpty(after);
     const int kWorkLimit = 250000;
-    bool exact = a.GetCount() > 0 && b.GetCount() > 0 && a.GetCount() * b.GetCount() <= kWorkLimit;
+    int rows = a.GetCount() + 1;
+    int cols = b.GetCount() + 1;
+    bool exact = (int64)rows * cols <= kWorkLimit;
     DiffResult result;
+    result.added = 0;
+    result.removed = 0;
+    result.changed = 0;
+    result.truncated = false;
+    result.approximate = false;
     result.text << "--- a/" << path << "\n+++ b/" << path << "\n";
 
     if(!exact) {
@@ -396,56 +410,41 @@ DiffResult BuildDiffResult(const String& path, const String& before, const Strin
         while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
               a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
             suffix++;
-        result.removed = a.GetCount() - prefix - suffix;
-        result.added = b.GetCount() - prefix - suffix;
-        result.changed = min(result.removed, result.added);
+        // The coarse region is useful for navigation, but its exact edit
+        // counts are unknowable without the alignment work we declined.
+        result.removed = -1;
+        result.added = -1;
+        result.changed = -1;
         result.approximate = true;
-        result.text << "@@ -" << (prefix + 1) << "," << result.removed
-                    << " +" << (prefix + 1) << "," << result.added << " @@\n"
+        result.text << "@@ coarse region starting at " << (prefix + 1) << " @@\n"
                     << "... bounded diff fallback; unchanged middle lines are not expanded; see diff_summary\n";
         result.truncated = true;
         return result;
     }
 
+    Vector<int> lcs;
+    lcs.SetCount(rows * cols, 0);
+    // A bounded LCS gives deterministic alignment for shifts, repeated lines,
+    // replacements and insert/delete pairs without unbounded quadratic work.
+    for(int i = a.GetCount() - 1; i >= 0; i--)
+        for(int j = b.GetCount() - 1; j >= 0; j--)
+            lcs[i * cols + j] = a[i] == b[j] ? lcs[(i + 1) * cols + j + 1] + 1
+                                             : max(lcs[(i + 1) * cols + j], lcs[i * cols + j + 1]);
+
     Vector<DiffOp> ops;
     int i = 0, j = 0, old_line = 1, new_line = 1;
-    // Equal-length files do not need alignment heuristics: compare each line
-    // at the same position so a run of replacements stays truthful.
-    if(a.GetCount() == b.GetCount()) {
-        for(int k = 0; k < a.GetCount(); k++) {
-            if(a[k] == b[k]) {
-                DiffOp& op = ops.Add();
-                op.kind = ' ';
-                op.text = a[k];
-                op.old_line = op.new_line = k + 1;
-            }
-            else {
-                DiffOp& removed = ops.Add();
-                removed.kind = '-';
-                removed.text = a[k];
-                removed.old_line = removed.new_line = k + 1;
-                DiffOp& added = ops.Add();
-                added.kind = '+';
-                added.text = b[k];
-                added.old_line = added.new_line = k + 1;
-                result.removed++;
-                result.added++;
-            }
-        }
-    }
-    else while(i < a.GetCount() || j < b.GetCount()) {
+    while(i < a.GetCount() || j < b.GetCount()) {
         DiffOp& op = ops.Add();
         op.old_line = old_line;
         op.new_line = new_line;
         if(i < a.GetCount() && j < b.GetCount() && a[i] == b[j]) {
             op.kind = ' ';
             op.text = a[i++];
+            j++;
             old_line++;
             new_line++;
         }
-        else if(j >= b.GetCount() || (i < a.GetCount() &&
-                                      (j >= b.GetCount() ||
-                                       (i + 1 < a.GetCount() && a[i + 1] == b[j])))) {
+        else if(j >= b.GetCount() || (i < a.GetCount() && lcs[(i + 1) * cols + j] >= lcs[i * cols + j + 1])) {
             op.kind = '-';
             op.text = a[i++];
             old_line++;
@@ -457,6 +456,14 @@ DiffResult BuildDiffResult(const String& path, const String& before, const Strin
             new_line++;
             result.added++;
         }
+    }
+    // Derive counts from the final operation sequence, not from planning
+    // state, so cached summaries cannot inherit stale aggregate values.
+    result.added = 0;
+    result.removed = 0;
+    for(int k = 0; k < ops.GetCount(); k++) {
+        if(ops[k].kind == '+') result.added++;
+        if(ops[k].kind == '-') result.removed++;
     }
     result.changed = min(result.added, result.removed);
 
@@ -530,9 +537,15 @@ int FindUniqueOccurrence(const String& s, const String& needle)
 
 String BuildDiffSummaryJson(const DiffResult& result)
 {
-    return Format("{\"lines_added\": %d, \"lines_removed\": %d, \"lines_changed\": %d, \"truncated\": %s, \"approximate\": %s}",
-                  result.added, result.removed, result.changed,
-                  result.truncated ? "true" : "false", result.approximate ? "true" : "false");
+    String out = "{\"lines_added\": ";
+    if(result.added < 0) out << "null"; else out << result.added;
+    out << ", \"lines_removed\": ";
+    if(result.removed < 0) out << "null"; else out << result.removed;
+    out << ", \"lines_changed\": ";
+    if(result.changed < 0) out << "null"; else out << result.changed;
+    out << ", \"truncated\": " << (result.truncated ? "true" : "false")
+        << ", \"approximate\": " << (result.approximate ? "true" : "false") << "}";
+    return out;
 }
 
 String BuildDiffSummaryJson(const String& before, const String& after)

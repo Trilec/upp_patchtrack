@@ -830,6 +830,61 @@ void TestCreateAndDriftDiagnostics(Harness& h)
     }
 }
 
+void TestDiffAlignmentRegressions(Harness& h)
+{
+    CaseLog case_log(h, "diff-alignment-regressions", "Checks bounded alignment for replacements, shifts, repeated lines, moved blocks, empty files, separated hunks, and fallback semantics.");
+    struct DiffCase { const char *name; const char *before; const char *after; int added; int removed; int changed; };
+    const DiffCase cases[] = {
+        { "replacement", "A\nB\nC\n", "A\nX\nC\n", 1, 1, 1 },
+        { "insert-begin-delete-end", "A\nB\nC\nD\n", "X\nA\nB\nC\n", 1, 1, 1 },
+        { "delete-begin-insert-end", "A\nB\nC\nD\n", "B\nC\nD\nX\n", 1, 1, 1 },
+        { "middle-shift", "A\nB\nC\nD\n", "A\nX\nB\nD\n", 1, 1, 1 },
+        { "distant-replacements", "A\nB\nC\nD\nE\n", "X\nB\nC\nD\nY\n", 2, 2, 2 },
+        { "distant-insert-delete", "A\nB\nC\nD\nE\nF\n", "A\nX\nB\nC\nD\nY\n", 2, 2, 2 },
+        { "repeated-lines", "A\nX\nA\nX\nB\n", "A\nA\nX\nB\nX\n", 1, 1, 1 },
+        { "moved-block", "A\nB\nC\nD\nE\n", "A\nD\nE\nB\nC\n", 2, 2, 2 },
+        { "empty-to-nonempty", "", "A\nB\n", 2, 0, 0 },
+        { "nonempty-to-empty", "A\nB\n", "", 0, 2, 0 },
+        { "complete-rewrite", "A\nB\nC\n", "X\nY\nZ\n", 3, 3, 3 },
+    };
+    for(int i = 0; i < CountOf(cases); i++) {
+        String root = MakeCaseRoot(h, String("diff-") + cases[i].name);
+        String rel = "src/diff.txt";
+        String abs = AppendFileName(root, rel);
+        Expect(h, WriteFileText(abs, cases[i].before), String("diff-alignment: seed failed ") + cases[i].name);
+        String hash = HashFileViaTool(h, abs);
+        String req = String("{\"workspace_root\":") + JString(root) + ",\"summary\":\"diff regression\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":" + JString(rel) + ",\"text\":" + JString(cases[i].after) + ",\"expected_sha256\":" + JString(hash) + "}]}";
+        Value out;
+        if(!ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "diff.json", req)), true, out, String("diff-alignment ") + cases[i].name))
+            continue;
+        Value summary = out["files"][0]["diff_summary"];
+        Expect(h, !(bool)summary["approximate"], String("diff-alignment: unexpectedly approximate ") + cases[i].name);
+        Expect(h, (int)summary["lines_added"] == cases[i].added, String("diff-alignment: added mismatch ") + cases[i].name);
+        Expect(h, (int)summary["lines_removed"] == cases[i].removed, String("diff-alignment: removed mismatch ") + cases[i].name);
+        Expect(h, (int)summary["lines_changed"] == cases[i].changed, String("diff-alignment: changed mismatch ") + cases[i].name);
+        String diff = (String)out["files"][0]["diff"];
+        Expect(h, diff.Find("  A\n") < 0, String("diff-alignment: malformed context ") + cases[i].name);
+        Expect(h, LoadFile(abs) == cases[i].before, String("diff-alignment: preview mutated file ") + cases[i].name);
+    }
+
+    String root = MakeCaseRoot(h, "diff-fallback");
+    String rel = "src/pathological.txt";
+    String before, after;
+    for(int i = 0; i < 600; i++) {
+        before << Format("old-%04d\n", i);
+        after << Format("new-%04d\n", i);
+    }
+    String abs = AppendFileName(root, rel);
+    Expect(h, WriteFileText(abs, before), "diff-alignment: fallback seed failed");
+    String req = String("{\"workspace_root\":") + JString(root) + ",\"summary\":\"fallback\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":" + JString(rel) + ",\"text\":" + JString(after) + "}]}";
+    Value out;
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "fallback.json", req)), true, out, "diff-alignment fallback")) {
+        Value summary = out["files"][0]["diff_summary"];
+        Expect(h, (bool)summary["approximate"], "diff-alignment: fallback was not marked approximate");
+        Expect(h, IsNull(summary["lines_added"]) && IsNull(summary["lines_removed"]) && IsNull(summary["lines_changed"]), "diff-alignment: fallback exposed guessed exact counts");
+    }
+}
+
 void TestBoundedWorkspaceScan(Harness& h)
 {
     CaseLog case_log(h, "bounded-workspace-scan", "Creates 10,000 unrelated files and proves preview scans metadata and known directories without walking the unrelated tree.");
@@ -1925,6 +1980,7 @@ int RunAll(Harness& h)
     TestAliasesAndNoOpPreview(h);
     TestEngineFailures(h);
     TestCreateAndDriftDiagnostics(h);
+    TestDiffAlignmentRegressions(h);
     TestBoundedWorkspaceScan(h);
     TestTransportFailures(h);
     TestRollbackFailures(h);

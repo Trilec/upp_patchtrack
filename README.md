@@ -246,6 +246,16 @@ For large rewrites, `diff` is bounded to keep MCP responses useful. Read
 `diff_summary` for added, removed, changed, and truncation counts; this avoids
 turning a perfectly valid large edit into a transport-sized incident.
 
+`diff_summary` semantics are exact when `approximate` is `false`: `lines_added`
+and `lines_removed` count `+` and `-` operations in the generated unified diff,
+and `lines_changed` counts replacement pairs, defined as
+`min(lines_added, lines_removed)`. A replacement is therefore one removed line,
+one added line, and one changed line. `truncated` means visible diff hunks were
+limited for response size; it does not change the exact summary counts.
+When bounded alignment work is exceeded, `approximate` is `true`, the visible
+diff is a coarse region, and the three line-count fields are `null` because
+unsupported guesses must not look exact.
+
 ## Why Structured Edits Instead Of Freeform Patches
 PatchTrack deliberately prefers structured edit intents over raw patch text.
 
@@ -413,7 +423,7 @@ E:\apps\github\upp_patchtrack\build\patchtrack_tests.exe
 Current status:
 - `patchtrack selftest`: passing
 - `patchtrack_mcp --selftest`: passing
-- protocol harness: `24 / 24` passing
+- protocol harness: `25 / 25` passing
 - real Windows MCP stdio probe: passing
 
 Latest observed transport benchmark on this machine:
