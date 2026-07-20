@@ -24,6 +24,7 @@ bool PlatformIsPathDirectory(const String& path, bool& is_directory, PlatformErr
 bool PlatformCreateDirectory(const String& path, PlatformErrorCode& code);
 bool PlatformReadFileRaw(const String& path, String& out, PlatformErrorCode& code, bool& not_found);
 bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorCode& code);
+bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& not_found);
 void PlatformExitAbruptly(int code);
 
 }

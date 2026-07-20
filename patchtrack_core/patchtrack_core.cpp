@@ -23,6 +23,8 @@ using namespace Upp;
 
 namespace {
 
+const char *const kPatchtrackVersion = "1.1.0";
+
 struct Sha256Ctx {
     uint32_t state[8];
     uint64_t bitlen = 0;
@@ -370,23 +372,62 @@ String MakeUnifiedDiff(const String& path, const String& before, const String& a
     out << "--- a/" << path << "\n";
     out << "+++ b/" << path << "\n";
 
-    int maxn = max(a.GetCount(), b.GetCount());
-    for(int i = 0; i < maxn; i++) {
-        String av = i < a.GetCount() ? a[i] : String();
-        String bv = i < b.GetCount() ? b[i] : String();
-        if(i < a.GetCount() && i < b.GetCount() && av == bv)
-            continue;
+    int prefix = 0;
+    while(prefix < a.GetCount() && prefix < b.GetCount() && a[prefix] == b[prefix])
+        prefix++;
 
-        out << "@@ line " << (i + 1) << " @@\n";
-        if(i < a.GetCount())
-            out << "-" << av << "\n";
-        if(i < b.GetCount())
-            out << "+" << bv << "\n";
+    int suffix = 0;
+    while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
+          a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
+        suffix++;
+
+    if(prefix == a.GetCount() && prefix == b.GetCount()) {
+        out << " no changes\n";
+        return out;
     }
 
-    if(out.Find("@@") < 0)
-        out << " no changes\n";
+    int old_changed = a.GetCount() - prefix - suffix;
+    int new_changed = b.GetCount() - prefix - suffix;
+    out << "@@ -" << (prefix + 1) << "," << old_changed
+        << " +" << (prefix + 1) << "," << new_changed << " @@\n";
+
+    const int kDiffLineLimit = 80;
+    int shown = 0;
+    for(int i = 0; i < old_changed; i++) {
+        if(shown++ == kDiffLineLimit) {
+            out << "... " << (old_changed + new_changed - kDiffLineLimit) << " changed lines omitted; see diff_summary\n";
+            return out;
+        }
+        out << "-" << a[prefix + i] << "\n";
+    }
+    for(int i = 0; i < new_changed; i++) {
+        if(shown++ == kDiffLineLimit) {
+            out << "... " << (old_changed + new_changed - kDiffLineLimit) << " changed lines omitted; see diff_summary\n";
+            return out;
+        }
+        out << "+" << b[prefix + i] << "\n";
+    }
     return out;
+}
+
+String BuildDiffSummaryJson(const String& before, const String& after)
+{
+    Vector<String> a = SplitLinesKeepEmpty(before);
+    Vector<String> b = SplitLinesKeepEmpty(after);
+    int prefix = 0;
+    while(prefix < a.GetCount() && prefix < b.GetCount() && a[prefix] == b[prefix])
+        prefix++;
+    int suffix = 0;
+    while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
+          a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
+        suffix++;
+
+    int removed = a.GetCount() - prefix - suffix;
+    int added = b.GetCount() - prefix - suffix;
+    int changed = min(removed, added);
+    bool truncated = removed + added > 80;
+    return Format("{\"lines_added\": %d, \"lines_removed\": %d, \"lines_changed\": %d, \"truncated\": %s}",
+                  added, removed, changed, truncated ? "true" : "false");
 }
 
 String Slug(String s, int max_len = 16)
@@ -545,6 +586,9 @@ void AppendStructuredErrorFields(String& out, const String& error)
     String blocking_intent = ErrorField(error, "blocking_intent");
     String blocking_summary = ErrorField(error, "blocking_summary");
     String heartbeat_age_sec = ErrorField(error, "heartbeat_age_sec");
+    String expected_sha256 = ErrorField(error, "expected_sha256");
+    String actual_sha256 = ErrorField(error, "actual_sha256");
+    String difference_kind = ErrorField(error, "difference_kind");
 
     if(!why.IsEmpty())
         out << ",\n  \"message\": " << JString(why);
@@ -568,6 +612,12 @@ void AppendStructuredErrorFields(String& out, const String& error)
         out << ",\n  \"blocking_summary\": " << JString(blocking_summary);
     if(!heartbeat_age_sec.IsEmpty())
         out << ",\n  \"heartbeat_age_sec\": " << JString(heartbeat_age_sec);
+    if(!expected_sha256.IsEmpty())
+        out << ",\n  \"expected_sha256\": " << JString(expected_sha256);
+    if(!actual_sha256.IsEmpty())
+        out << ",\n  \"actual_sha256\": " << JString(actual_sha256);
+    if(!difference_kind.IsEmpty())
+        out << ",\n  \"difference_kind\": " << JString(difference_kind);
 }
 String BuildErrorJson(const String& error)
 {
@@ -785,6 +835,32 @@ bool WriteFileDetailed(const String& path,
     }
     return true;
 }
+
+bool DeleteFileDetailed(const String& path,
+                        const String& stage,
+                        const String& operation,
+                        const String& inject_fault,
+                        const char *fault_name,
+                        bool missing_ok,
+                        String& error)
+{
+    if(InjectFailure(inject_fault, fault_name,
+                     stage.Find("rollback") >= 0 ? "PERMISSION_DENIED_ROLLBACK" : "PERMISSION_DENIED_WRITE",
+                     stage, path, operation, "The test fault denied file removal.", error))
+        return false;
+
+    PlatformErrorCode code = 0;
+    bool not_found = false;
+    if(PlatformDeleteFileRaw(path, code, not_found) || (missing_ok && not_found))
+        return true;
+    if(not_found) {
+        error = "FILE_NOT_FOUND: " + path;
+        return false;
+    }
+    error = BuildFsErrorForCode(code, stage, path, operation);
+    return false;
+}
+
 struct TextFile : Moveable<TextFile> {
     String path;
     String rel;
@@ -793,6 +869,7 @@ struct TextFile : Moveable<TextFile> {
     String newline = "\n";
     bool bom = false;
     bool eof_newline = false;
+    bool existed = true;
     String sha256;
 };
 
@@ -812,6 +889,7 @@ bool ReadTextFile(const String& path,
     out.rel = rel;
     out.raw = raw;
     out.sha256 = Sha256String(raw);
+    out.existed = true;
     out.bom = raw.GetLength() >= 3 &&
               (byte)raw[0] == 0xef &&
               (byte)raw[1] == 0xbb &&
@@ -860,6 +938,19 @@ String GetJsonString(Value v, const String& def = String())
     if(!v.Is<String>())
         return def;
     return (String)v;
+}
+
+void MakeMissingTextFile(const String& path, const String& rel, TextFile& out)
+{
+    out.path = path;
+    out.rel = rel;
+    out.raw.Clear();
+    out.text.Clear();
+    out.newline = "\n";
+    out.bom = false;
+    out.eof_newline = false;
+    out.existed = false;
+    out.sha256 = Sha256String("");
 }
 
 bool GetJsonBool(Value v, bool def = false)
@@ -978,7 +1069,7 @@ bool ValidateRequestShape(Value req, String& error)
 
     const char *string_fields[] = {
         "find", "text", "replace", "new_text", "include", "anchor",
-        "start", "end", "expected_sha256", "expected_hash"
+        "start", "end", "expected_sha256", "expected_hash", "expected_normalized_sha256"
     };
     const char *array_fields[] = { "new_lines", "expected_contains" };
     const char *integer_fields[] = { "start_line", "end_line" };
@@ -1060,7 +1151,7 @@ int FindPlanned(Vector<PlannedFile>& files, const String& rel)
 }
 
 bool EnsurePlanned(Vector<PlannedFile>& files, const String& root, const String& rel,
-                   PlannedFile*& pf, String& error)
+                   bool allow_missing, PlannedFile*& pf, String& error)
 {
     if(IsAbsoluteOrUnsafePath(rel)) {
         error = "UNSAFE_PATH: " + rel;
@@ -1075,8 +1166,12 @@ bool EnsurePlanned(Vector<PlannedFile>& files, const String& root, const String&
 
     PlannedFile& add = files.Add();
     add.rel = rel;
-    if(!ReadTextFile(JoinPath(root, rel), rel, add.original, error))
-        return false;
+    String path = JoinPath(root, rel);
+    if(!ReadTextFile(path, rel, add.original, error)) {
+        if(!allow_missing || ErrorCodeOnly(error) != "FILE_NOT_FOUND")
+            return false;
+        MakeMissingTextFile(path, rel, add.original);
+    }
     add.next_text = add.original.text;
     pf = &add;
     return true;
@@ -1089,7 +1184,15 @@ bool VerifyHashGuard(Value edit, const PlannedFile& pf, String& error)
         expected = GetJsonString(edit["expected_hash"]);
 
     if(expected.GetLength() && expected != pf.original.sha256) {
-        error = "HASH_MISMATCH: " + pf.rel;
+        String expected_normalized = GetJsonString(edit["expected_normalized_sha256"]);
+        String actual_normalized = Sha256String(pf.original.text);
+        String difference_kind = !expected_normalized.IsEmpty() && expected_normalized == actual_normalized
+            ? "newline_only" : "content";
+        error = EncodeStructuredError("HASH_MISMATCH", "hash_precondition", pf.rel, "verify_expected_sha256",
+                                      String(), String(), "The supplied hash does not match the current file contents.")
+                + "||expected_sha256=" + expected
+                + "||actual_sha256=" + pf.original.sha256
+                + "||difference_kind=" + difference_kind;
         return false;
     }
 
@@ -1105,8 +1208,9 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
         return false;
     }
 
+    bool can_create = op == "create_file" || op == "rewrite_file";
     PlannedFile* pf = NULL;
-    if(!EnsurePlanned(files, root, rel, pf, error))
+    if(!EnsurePlanned(files, root, rel, can_create, pf, error))
         return false;
     if(!VerifyHashGuard(edit, *pf, error))
         return false;
@@ -1208,6 +1312,22 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
     }
 
     if(op == "rewrite_file") {
+        text = GetPayloadText(edit);
+        pf->changed = true;
+        return true;
+    }
+
+    if(op == "create_file") {
+        if(pf->original.existed) {
+            error = EncodeStructuredError("FILE_ALREADY_EXISTS", "create_precondition", rel, "create_file",
+                                          String(), "Use rewrite_file only when replacing an existing file is intentional.",
+                                          "create_file never overwrites an existing target.");
+            return false;
+        }
+        if(IsNull(edit["text"])) {
+            error = "BAD_REQUEST: create_file requires text";
+            return false;
+        }
         text = GetPayloadText(edit);
         pf->changed = true;
         return true;
@@ -1372,9 +1492,11 @@ String BuildPreviewJson(bool ok, const String& error, const Vector<PlannedFile>&
         out << "    {\n";
         out << "      \"path\": " << JString(pf.rel) << ",\n";
         out << "      \"changed\": " << JBool(pf.changed) << ",\n";
+        out << "      \"created\": " << JBool(!pf.original.existed) << ",\n";
         out << "      \"hash_before\": " << JString(pf.original.sha256) << ",\n";
         out << "      \"hash_after\": " << JString(Sha256String(BuildRawBytes(pf.original, pf.next_text))) << ",\n";
-        out << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << "\n";
+        out << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << ",\n";
+        out << "      \"diff_summary\": " << BuildDiffSummaryJson(pf.original.text, pf.next_text) << "\n";
         out << "    }";
     }
     out << "\n  ]\n";
@@ -1758,6 +1880,12 @@ bool RestorePlannedFiles(const Vector<PlannedFile>& files,
 {
     for(int i = written_indices.GetCount() - 1; i >= 0; i--) {
         const PlannedFile& pf = files[written_indices[i]];
+        if(!pf.original.existed) {
+            if(!DeleteFileDetailed(pf.original.path, "apply_restore", "remove_created_file", inject_fault,
+                                   "permission_denied_write_target", true, error))
+                return false;
+            continue;
+        }
         if(!WriteFileDetailed(pf.original.path, pf.original.raw, "apply_restore", "write_file", inject_fault, "permission_denied_write_target", error))
             return false;
     }
@@ -1810,10 +1938,12 @@ String BuildApplyFilesJson(const Vector<PlannedFile>& files,
 
         files_json << "    {\n"
                    << "      \"path\": " << JString(pf.rel) << ",\n"
+                   << "      \"created\": " << JBool(!pf.original.existed) << ",\n"
                    << "      \"hash_before\": " << JString(pf.original.sha256) << ",\n"
                    << "      \"hash_after\": " << JString(hash_after[changed]) << ",\n"
                    << "      \"snapshot_before\": " << JString(snapshot_rel[changed]) << ",\n"
-                   << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << "\n"
+                   << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << ",\n"
+                   << "      \"diff_summary\": " << BuildDiffSummaryJson(pf.original.text, pf.next_text) << "\n"
                    << "    }";
         changed++;
     }
@@ -2010,14 +2140,41 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
 
         TextFile latest;
         String read_error;
-        if(!ReadTextFile(pf.original.path, pf.rel, latest, read_error, inject_fault, "permission_denied_read_target", "commit_precondition_recheck"))
+        bool latest_exists = ReadTextFile(pf.original.path, pf.rel, latest, read_error, inject_fault,
+                                          "permission_denied_read_target", "commit_precondition_recheck");
+        if(!pf.original.existed) {
+            if(latest_exists) {
+                String conflict = EncodeStructuredError("CREATE_CONFLICT", "commit_precondition_recheck", pf.rel,
+                                                        "create_file", String(),
+                                                        "Re-read the target and choose create_file or rewrite_file deliberately.",
+                                                        "The target was created after preview, so PatchTrack refused to overwrite it.");
+                return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
+                                            planned_files_json, checks, files, written_indices,
+                                            conflict, error, inject_fault);
+            }
+            if(ErrorCodeOnly(read_error) != "FILE_NOT_FOUND")
+                return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
+                                            planned_files_json, checks, files, written_indices,
+                                            read_error, error, inject_fault);
+        }
+        else if(!latest_exists) {
             return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
                                         planned_files_json, checks, files, written_indices,
                                         read_error, error, inject_fault);
-        if(latest.sha256 != pf.original.sha256)
+        }
+        else if(latest.sha256 != pf.original.sha256) {
+            String difference_kind = NormalizeLf(latest.text) == NormalizeLf(pf.original.text) ? "newline_only" : "content";
             return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
                                         planned_files_json, checks, files, written_indices,
-                                        "HASH_MISMATCH: " + pf.rel + " changed before write", error, inject_fault);
+                                        EncodeStructuredError("HASH_MISMATCH", "commit_precondition_recheck", pf.rel,
+                                                              "verify_expected_sha256", String(),
+                                                              "Re-read the file, refresh expected_sha256, and preview again before retrying.",
+                                                              "The target changed after preview and before commit.")
+                                        + "||expected_sha256=" + pf.original.sha256
+                                        + "||actual_sha256=" + latest.sha256
+                                        + "||difference_kind=" + difference_kind,
+                                        error, inject_fault);
+        }
 
         if(!SaveTextFilePreserving(pf.original, pf.next_text, read_error, inject_fault, "permission_denied_write_target", "apply_write"))
             return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
@@ -2112,6 +2269,7 @@ struct RollbackFilePlan : Moveable<RollbackFilePlan> {
     String current_hash;
     String restore_raw;
     String restore_hash;
+    bool remove_on_rollback = false;
 };
 
 Vector<String> CollectRollbackFiles(const Vector<RollbackFilePlan>& plans)
@@ -2132,6 +2290,7 @@ String BuildRollbackFilesJson(const Vector<RollbackFilePlan>& plans, const Strin
                    << "      \"path\": " << JString(plans[i].rel) << ",\n"
                    << "      \"hash_before\": " << JString(plans[i].current_hash) << ",\n"
                    << "      \"hash_after\": " << JString(plans[i].restore_hash) << ",\n"
+                   << "      \"removed\": " << JBool(plans[i].remove_on_rollback) << ",\n"
                    << "      \"rolled_back_transaction\": " << JString(rolled_back_transaction) << "\n"
                    << "    }";
     }
@@ -2235,6 +2394,7 @@ bool Rollback(Value req, String& result_json, String& error)
         String rel = GetJsonString(files[i]["path"]);
         String expected_after = GetJsonString(files[i]["hash_after"]);
         String snapshot_rel = GetJsonString(files[i]["snapshot_before"]);
+        bool created = GetJsonBool(files[i]["created"], false);
         String path = JoinPath(root, rel);
         String snap_path = AppendFileName(session_dir, snapshot_rel);
 
@@ -2260,6 +2420,7 @@ bool Rollback(Value req, String& result_json, String& error)
         plan.current_hash = current.sha256;
         plan.restore_raw = before_bytes;
         plan.restore_hash = Sha256String(before_bytes);
+        plan.remove_on_rollback = created;
     }
 
     RecoveryScanInfo startup_scan;
@@ -2307,7 +2468,12 @@ bool Rollback(Value req, String& result_json, String& error)
                                            summary, tran_id, files_json, checks, plans,
                                            restored_indices, "WRITE_FAILED: injected rollback before first write", error, inject_fault);
 
-        if(!WriteFileDetailed(plans[i].path, plans[i].restore_raw, "rollback_write", "write_file", inject_fault, "permission_denied_rollback_write", error))
+        bool restored = plans[i].remove_on_rollback
+            ? DeleteFileDetailed(plans[i].path, "rollback_write", "remove_created_file", inject_fault,
+                                 "permission_denied_rollback_write", false, error)
+            : WriteFileDetailed(plans[i].path, plans[i].restore_raw, "rollback_write", "write_file", inject_fault,
+                                "permission_denied_rollback_write", error);
+        if(!restored)
             return FinalizeRollbackFailure(rb_file, rb_id, session_id, actor,
                                            summary, tran_id, files_json, checks, plans,
                                            restored_indices, error, error, inject_fault);
@@ -2514,7 +2680,7 @@ void TestHashMismatch(Vector<String>& failures)
     bool ok = Plan(req, files, error);
     Expect(!ok, "Expected hash mismatch plan failure", failures);
     if(!error.IsEmpty())
-        Expect(StartsWith2(error, "HASH_MISMATCH: "), "Unexpected hash mismatch error: " + error, failures);
+        Expect(StartsWith2(error, "HASH_MISMATCH"), "Unexpected hash mismatch error: " + error, failures);
     Expect(LoadFile(JoinPath(root, rel)) == before, "Hash mismatch should not mutate file", failures);
 }
 
@@ -2640,7 +2806,7 @@ void TestCommitPreconditionRecheck(Vector<String>& failures)
     ok = ApplyWrite(req, files, apply_json, error);
     Expect(!ok, "Expected commit precondition recheck to fail", failures);
     if(!error.IsEmpty())
-        Expect(StartsWith2(error, "HASH_MISMATCH: "), "Unexpected commit precondition error: " + error, failures);
+        Expect(StartsWith2(error, "HASH_MISMATCH"), "Unexpected commit precondition error: " + error, failures);
     Expect(LoadFile(JoinPath(root, rel)) == diverged, "Commit precondition failure should leave diverged content untouched", failures);
 }void TestEofNewlinePreserved(Vector<String>& failures)
 {
@@ -2711,6 +2877,11 @@ int BuildSelfTestReport(String& report)
 
 namespace Upp {
 
+const char *PatchtrackVersion()
+{
+    return kPatchtrackVersion;
+}
+
 String PatchtrackFormatErrorJson(const String& error)
 {
     return BuildErrorJson(error);
@@ -2773,10 +2944,22 @@ bool PatchtrackRollback(Value req, String& result_json, String& error)
 
 bool PatchtrackHash(const String& path, String& result_text, String& error)
 {
-    String s;
-    if(!ReadFileDetailed(path, s, "hash_read", "read_file", String(), "permission_denied_read_target", error))
+    String sha256, normalized_sha256, newline;
+    if(!PatchtrackHashDetails(path, sha256, normalized_sha256, newline, error))
         return false;
-    result_text = Sha256String(s) + "  " + path + "\n";
+    result_text = sha256 + "  " + path + "\n";
+    return true;
+}
+
+bool PatchtrackHashDetails(const String& path, String& sha256, String& normalized_sha256,
+                           String& newline, String& error)
+{
+    TextFile file;
+    if(!ReadTextFile(path, path, file, error, String(), "permission_denied_read_target", "hash_read"))
+        return false;
+    sha256 = file.sha256;
+    normalized_sha256 = Sha256String(file.text);
+    newline = file.newline == "\r\n" ? "crlf" : "lf";
     return true;
 }
 

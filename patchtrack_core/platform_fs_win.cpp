@@ -148,6 +148,19 @@ bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorC
     return true;
 }
 
+bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& not_found)
+{
+    not_found = false;
+    if(DeleteFileA(~path)) {
+        code = 0;
+        return true;
+    }
+
+    code = (PlatformErrorCode)GetLastError();
+    not_found = (DWORD)code == ERROR_FILE_NOT_FOUND || (DWORD)code == ERROR_PATH_NOT_FOUND;
+    return false;
+}
+
 void PlatformExitAbruptly(int code)
 {
     ExitProcess((UINT)code);

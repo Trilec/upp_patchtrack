@@ -335,15 +335,15 @@ bool ValidateSingleStringArg(const Value& args, const char *field, String& error
     return ExpectStringField(args, field, true, discard, error_json);
 }
 
-String BuildHashStructuredJson(const String& path, const String& result_text)
+String BuildHashStructuredJson(const String& path, const String& sha256,
+                               const String& normalized_sha256, const String& newline)
 {
-    int split = result_text.Find("  ");
-    String sha = split >= 0 ? result_text.Left(split) : TrimBoth(result_text);
-
     String out;
     out << "{\n"
         << "  \"ok\": true,\n"
-        << "  \"sha256\": " << JString(sha) << ",\n"
+        << "  \"sha256\": " << JString(sha256) << ",\n"
+        << "  \"normalized_sha256\": " << JString(normalized_sha256) << ",\n"
+        << "  \"newline\": " << JString(newline) << ",\n"
         << "  \"path\": " << JString(path) << "\n"
         << "}\n";
     return out;
@@ -362,19 +362,34 @@ String BuildHistoryStructuredJson(const String& workspace_root, const String& re
 
 String BuildInitializeResult()
 {
-    return
-        "{\n"
-        "  \"protocolVersion\": \"2024-11-05\",\n"
-        "  \"serverInfo\": {\n"
-        "    \"name\": \"patchtrack_mcp\",\n"
-        "    \"version\": \"1.0.0\"\n"
-        "  },\n"
-        "  \"capabilities\": {\n"
-        "    \"tools\": {\n"
-        "      \"listChanged\": false\n"
-        "    }\n"
-        "  }\n"
-        "}\n";
+    String out;
+    out << "{\n"
+        << "  \"protocolVersion\": \"2024-11-05\",\n"
+        << "  \"serverInfo\": {\n"
+        << "    \"name\": \"patchtrack_mcp\",\n"
+        << "    \"version\": " << JString(PatchtrackVersion()) << "\n"
+        << "  },\n"
+        << "  \"capabilities\": {\n"
+        << "    \"tools\": {\n"
+        << "      \"listChanged\": false\n"
+        << "    }\n"
+        << "  },\n"
+        << "  \"instructions\": \"PatchTrack provides transactional structured source edits. Call version when the active release or supported edit contract matters; preview before apply, and use rollback for reversal.\"\n"
+        << "}\n";
+    return out;
+}
+
+String BuildVersionStructuredJson()
+{
+    String out;
+    out << "{\n"
+        << "  \"ok\": true,\n"
+        << "  \"name\": \"patchtrack_mcp\",\n"
+        << "  \"version\": " << JString(PatchtrackVersion()) << ",\n"
+        << "  \"protocol_version\": \"2024-11-05\",\n"
+        << "  \"features\": [\"transactional_edits\", \"create_file\", \"rewrite_creates_missing\", \"structured_hash_diagnostics\", \"bounded_diffs\"]\n"
+        << "}\n";
+    return out;
 }
 
 String BuildToolsListResult()
@@ -382,6 +397,16 @@ String BuildToolsListResult()
     return
         "{\n"
         "  \"tools\": [\n"
+        "    {\n"
+        "      \"name\": \"version\",\n"
+        "      \"annotations\": {\n"
+        "        \"readOnlyHint\": true,\n"
+        "        \"destructiveHint\": false,\n"
+        "        \"idempotentHint\": true\n"
+        "      },\n"
+        "      \"description\": \"Return the active PatchTrack release, MCP protocol version, and supported feature flags.\",\n"
+        "      \"inputSchema\": {\"type\": \"object\", \"additionalProperties\": false}\n"
+        "    },\n"
         "    {\n"
         "      \"name\": \"preview\",\n"
         "      \"annotations\": {\n"
@@ -407,7 +432,7 @@ String BuildToolsListResult()
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
                 "              \"properties\": {\n"
-                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement. The canonical names here are the only supported PatchTrack operations.\"},\n"
+                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"create_file\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement; create_file only creates absent targets, while rewrite_file deliberately replaces or creates a complete file.\"},\n"
         "                \"file\": {\"type\": \"string\", \"description\": \"Workspace-relative file path.\"},\n"
         "                \"find\": {\"type\": \"string\", \"description\": \"Original text to match exactly.\"},\n"
         "                \"text\": {\"type\": \"string\", \"description\": \"Replacement content to write.\"},\n"
@@ -416,7 +441,8 @@ String BuildToolsListResult()
         "                \"start\": {\"type\": \"string\", \"description\": \"Start anchor for replace_between.\"},\n"
         "                \"end\": {\"type\": \"string\", \"description\": \"End anchor for replace_between.\"},\n"
         "                \"include\": {\"type\": \"string\", \"description\": \"Line to ensure is present in a file.\"},\n"
-        "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+                "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+        "                \"expected_normalized_sha256\": {\"type\": \"string\", \"description\": \"Optional normalized-content hash returned by hash; distinguishes newline-only drift from content drift.\"},\n"
         "                \"start_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive start line for replace_lines.\"},\n"
         "                \"end_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive end line for replace_lines.\"},\n"
         "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Validation substrings required in the selected line range.\"}\n"
@@ -453,7 +479,7 @@ String BuildToolsListResult()
         "              \"type\": \"object\",\n"
         "              \"required\": [\"op\", \"file\"],\n"
                 "              \"properties\": {\n"
-                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement. The canonical names here are the only supported PatchTrack operations.\"},\n"
+                "                \"op\": {\"type\": \"string\", \"enum\": [\"replace_exact\", \"replace_all_exact\", \"insert_before_exact\", \"insert_after_exact\", \"insert_before_exact_line\", \"insert_after_exact_line\", \"delete_exact\", \"create_file\", \"rewrite_file\", \"replace_between\", \"replace_lines\", \"ensure_include\"], \"description\": \"Use replace_exact for an ordinary single replacement; create_file only creates absent targets, while rewrite_file deliberately replaces or creates a complete file.\"},\n"
         "                \"file\": {\"type\": \"string\", \"description\": \"Workspace-relative file path.\"},\n"
         "                \"find\": {\"type\": \"string\", \"description\": \"Original text to match exactly.\"},\n"
         "                \"text\": {\"type\": \"string\", \"description\": \"Replacement content to write.\"},\n"
@@ -462,7 +488,8 @@ String BuildToolsListResult()
         "                \"start\": {\"type\": \"string\", \"description\": \"Start anchor for replace_between.\"},\n"
         "                \"end\": {\"type\": \"string\", \"description\": \"End anchor for replace_between.\"},\n"
         "                \"include\": {\"type\": \"string\", \"description\": \"Line to ensure is present in a file.\"},\n"
-        "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+                "                \"expected_sha256\": {\"type\": \"string\", \"description\": \"Pre-edit SHA-256 hash of the target file.\"},\n"
+        "                \"expected_normalized_sha256\": {\"type\": \"string\", \"description\": \"Optional normalized-content hash returned by hash; distinguishes newline-only drift from content drift.\"},\n"
         "                \"start_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive start line for replace_lines.\"},\n"
         "                \"end_line\": {\"type\": \"integer\", \"minimum\": 1, \"description\": \"1-based inclusive end line for replace_lines.\"},\n"
         "                \"expected_contains\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}, \"description\": \"Validation substrings required in the selected line range.\"}\n"
@@ -561,6 +588,12 @@ bool ValidateToolCall(const String& tool_name, const Value& args, String& error_
         return ValidateSingleStringArg(args, "path", error_json);
     if(name == "history" || name == "recovery_scan")
         return ValidateSingleStringArg(args, "workspace_root", error_json);
+    if(name == "version") {
+        if(!ExpectMap(args, "arguments", error_json))
+            return false;
+        Vector<String> allowed;
+        return RejectUnexpectedKeys(args, allowed, error_json);
+    }
     return true;
 }
 
@@ -602,18 +635,26 @@ bool RunHashOrHistoryTool(const String& tool_name, const Value& args, String& re
     String text;
     String error;
 
+    if(name == "version") {
+        result_json = BuildVersionStructuredJson();
+        is_error = false;
+        return true;
+    }
+
     if(name == "hash") {
         String path;
         if(!ExpectStringField(args, "path", true, path, result_json)) {
             is_error = true;
             return true;
         }
-        if(!PatchtrackHash(path, text, error)) {
+        String normalized_sha256;
+        String newline;
+        if(!PatchtrackHashDetails(path, text, normalized_sha256, newline, error)) {
             result_json = PatchtrackFormatErrorJson(error);
             is_error = true;
             return true;
         }
-        result_json = BuildHashStructuredJson(path, text);
+        result_json = BuildHashStructuredJson(path, text, normalized_sha256, newline);
         is_error = false;
         return true;
     }
@@ -897,7 +938,7 @@ int RunSelfTest()
     Expect(st, HandleJsonRpcRequest(init, response, has_response), "initialize dispatch failed");
     Expect(st, has_response, "initialize should respond");
     Expect(st, response.Find("patchtrack_mcp") >= 0, "initialize response missing server name");
-    Expect(st, response.Find("1.0.0") >= 0, "initialize response missing v1 server version");
+    Expect(st, response.Find(PatchtrackVersion()) >= 0, "initialize response missing PatchTrack version");
 
     Value list = ParseJSON("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n");
     Expect(st, HandleJsonRpcRequest(list, response, has_response), "tools/list dispatch failed");
@@ -906,6 +947,7 @@ int RunSelfTest()
     Expect(st, response.Find("patchtrack_apply") < 0, "tools/list should not advertise host-prefixed names");
     Expect(st, response.Find("\"readOnlyHint\": false") >= 0, "tools/list missing annotations");
     Expect(st, response.Find("transaction_id") >= 0, "tools/list missing tighter rollback schema");
+    Expect(st, response.Find("\"name\": \"version\"") >= 0, "tools/list missing version tool");
 
     String root = AppendFileName(GetCurrentDirectory(), "_mcp_selftest");
     RealizeDirectory(root);
@@ -919,6 +961,10 @@ int RunSelfTest()
     Expect(st, HandleJsonRpcRequest(hash_req, response, has_response), "hash tool dispatch failed");
     Expect(st, has_response, "hash tool should respond");
     Expect(st, response.Find("sha256") >= 0, "hash tool response missing sha256 field");
+
+    Value version_req = ParseJSON("{\"jsonrpc\":\"2.0\",\"id\":30,\"method\":\"tools/call\",\"params\":{\"name\":\"version\",\"arguments\":{}}}");
+    Expect(st, HandleJsonRpcRequest(version_req, response, has_response), "version tool dispatch failed");
+    Expect(st, response.Find(PatchtrackVersion()) >= 0, "version tool response missing active version");
 
     String preview_call;
     preview_call << "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{"

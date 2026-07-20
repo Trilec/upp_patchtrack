@@ -141,6 +141,19 @@ bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorC
     return true;
 }
 
+bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& not_found)
+{
+    not_found = false;
+    if(unlink(~path) == 0) {
+        code = 0;
+        return true;
+    }
+
+    code = errno;
+    not_found = code == ENOENT || code == ENOTDIR;
+    return false;
+}
+
 void PlatformExitAbruptly(int code)
 {
     _exit(code);

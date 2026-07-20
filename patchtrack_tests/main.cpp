@@ -630,7 +630,7 @@ void TestEngineFailures(Harness& h)
              << "  \"workspace_root\": " << JString(root) << ",\n"
              << "  \"summary\": \"missing file\",\n"
              << "  \"actor\": \"harness\",\n"
-             << "  \"edits\": [{\"op\":\"rewrite_file\",\"file\":\"src/missing.txt\",\"text\":\"x\\n\"}]\n"
+             << "  \"edits\": [{\"op\":\"replace_exact\",\"file\":\"src/missing.txt\",\"find\":\"x\\n\",\"text\":\"y\\n\"}]\n"
              << "}\n";
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "missing-file.json", file_req)), false, out, "engine-failures file-not-found"))
         ExpectErrorCode(h, out, "FILE_NOT_FOUND", "engine-failures file-not-found");
@@ -694,6 +694,88 @@ void TestEngineFailures(Harness& h)
                 << "}\n";
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "journal-escape.json", journal_req)), false, out, "engine-failures journal-path"))
         ExpectErrorCode(h, out, "UNSAFE_PATH", "engine-failures journal-path");
+}
+
+void TestCreateAndDriftDiagnostics(Harness& h)
+{
+    CaseLog case_log(h, "create-and-drift", "Checks explicit and implicit file creation, exact rollback removal, newline-only drift diagnostics, and bounded large diffs.");
+    String root = MakeCaseRoot(h, "create-and-drift");
+    String rel = "generated/new.txt";
+    String abs = AppendFileName(root, rel);
+
+    String create_req;
+    create_req << "{\n"
+               << "  \"workspace_root\": " << JString(root) << ",\n"
+               << "  \"summary\": \"create generated file\",\n"
+               << "  \"actor\": \"harness\",\n"
+               << "  \"edits\": [{\"op\":\"create_file\",\"file\":" << JString(rel) << ",\"text\":\"created\\n\"}]\n"
+               << "}\n";
+    Value out;
+    if(!ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "create-preview.json", create_req)), true, out, "create-and-drift preview"))
+        return;
+    Expect(h, !FileExists(abs), "create-and-drift: preview created a workspace file");
+    Expect(h, (bool)out["files"][0]["created"], "create-and-drift: preview did not mark new file as created");
+
+    Value apply_out;
+    if(!ExpectJsonResult(h, RunJsonCommand(h, "apply", WriteRequestFile(root, "create-apply.json", create_req)), true, apply_out, "create-and-drift apply"))
+        return;
+    Expect(h, LoadFile(abs) == "created\n", "create-and-drift: create_file content mismatch");
+    Expect(h, (bool)apply_out["files"][0]["created"], "create-and-drift: journal result did not mark created file");
+
+    String rollback_req;
+    rollback_req << "{\"workspace_root\":" << JString(root) << ",\"transaction_id\":"
+                 << JString((String)apply_out["transaction_id"]) << ",\"actor\":\"harness\"}";
+    if(!ExpectJsonResult(h, RunJsonCommand(h, "rollback", WriteRequestFile(root, "create-rollback.json", rollback_req)), true, out, "create-and-drift rollback"))
+        return;
+    Expect(h, !FileExists(abs), "create-and-drift: rollback left a created file behind");
+
+    Expect(h, WriteFileText(abs, "already here\n"), "create-and-drift: failed to seed existing file");
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "create-existing.json", create_req)), false, out, "create-and-drift existing create"))
+        ExpectErrorCode(h, out, "FILE_ALREADY_EXISTS", "create-and-drift existing create");
+    Expect(h, LoadFile(abs) == "already here\n", "create-and-drift: rejected create changed existing file");
+
+    String rewrite_rel = "generated/rewrite.txt";
+    String rewrite_abs = AppendFileName(root, rewrite_rel);
+    String rewrite_req = String("{\"workspace_root\":") + JString(root)
+                       + ",\"summary\":\"rewrite missing\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":"
+                       + JString(rewrite_rel) + ",\"text\":\"rewritten\\n\"}]}";
+    if(!ExpectJsonResult(h, RunJsonCommand(h, "apply", WriteRequestFile(root, "rewrite-apply.json", rewrite_req)), true, apply_out, "create-and-drift rewrite missing"))
+        return;
+    Expect(h, LoadFile(rewrite_abs) == "rewritten\n", "create-and-drift: rewrite_file did not create missing target");
+
+    String drift_rel = "src/drift.txt";
+    String drift_abs = AppendFileName(root, drift_rel);
+    Expect(h, WriteFileText(drift_abs, "one\ntwo\n"), "create-and-drift: failed to seed drift file");
+    String raw_hash, normalized_hash, newline, error;
+    if(!Expect(h, PatchtrackHashDetails(drift_abs, raw_hash, normalized_hash, newline, error), "create-and-drift: hash details failed: " + error))
+        return;
+    Expect(h, WriteFileText(drift_abs, "one\r\ntwo\r\n"), "create-and-drift: failed to introduce newline-only drift");
+    String drift_req = String("{\"workspace_root\":") + JString(root)
+                     + ",\"summary\":\"newline drift\",\"actor\":\"harness\",\"edits\":[{\"op\":\"replace_exact\",\"file\":"
+                     + JString(drift_rel) + ",\"find\":\"two\\n\",\"text\":\"three\\n\",\"expected_sha256\":"
+                     + JString(raw_hash) + ",\"expected_normalized_sha256\":" + JString(normalized_hash) + "}]}";
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "newline-drift.json", drift_req)), false, out, "create-and-drift newline drift"))
+        ExpectField(h, out, "difference_kind", "newline_only", "create-and-drift newline drift");
+    Expect(h, LoadFile(drift_abs) == "one\r\ntwo\r\n", "create-and-drift: newline drift request changed file");
+
+    String large_before, large_after;
+    for(int i = 0; i < 100; i++) {
+        large_before << Format("old-%03d\n", i);
+        large_after << Format("new-%03d\n", i);
+    }
+    String large_rel = "generated/large.txt";
+    String large_abs = AppendFileName(root, large_rel);
+    Expect(h, WriteFileText(large_abs, large_before), "create-and-drift: failed to seed large file");
+    String large_hash = HashFileViaTool(h, large_abs);
+    if(large_hash.IsEmpty())
+        return;
+    String large_req = String("{\"workspace_root\":") + JString(root)
+                     + ",\"summary\":\"large rewrite\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":"
+                     + JString(large_rel) + ",\"text\":" + JString(large_after) + ",\"expected_sha256\":" + JString(large_hash) + "}]}";
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "large-preview.json", large_req)), true, out, "create-and-drift large preview")) {
+        Expect(h, (bool)out["files"][0]["diff_summary"]["truncated"], "create-and-drift: large diff should be bounded");
+        Expect(h, ((String)out["files"][0]["diff"]).Find("omitted") >= 0, "create-and-drift: large diff omitted marker missing");
+    }
 }
 
 void TestTransportFailures(Harness& h)
@@ -907,17 +989,17 @@ void TestMcpRoundTrip(Harness& h)
     if(!Expect(h, ParseMcpJsonResult(tools_cmd, tools_rpc, tools_body_json), "mcp-roundtrip: tools/list call failed: " + tools_cmd.out))
         return;
     Value tools = tools_rpc["result"]["tools"];
-    Expect(h, tools.GetCount() == 6, "mcp-roundtrip: tools/list should expose six tools");
+    Expect(h, tools.GetCount() == 7, "mcp-roundtrip: tools/list should expose seven tools");
     Expect(h, tools_cmd.out.Find("patchtrack_hash") < 0, "mcp-roundtrip: tools/list should not advertise host-prefixed names");
     Expect(h, tools_cmd.out.Find("\"replace_text\"") < 0, "mcp-roundtrip: tools/list should not advertise replace_text");
-    const char *expected_tools[] = { "preview", "apply", "rollback", "hash", "history", "recovery_scan" };
+    const char *expected_tools[] = { "version", "preview", "apply", "rollback", "hash", "history", "recovery_scan" };
     for(int i = 0; i < CountOf(expected_tools); i++) {
         bool found = false;
         for(int j = 0; j < tools.GetCount(); j++) {
             if((String)tools[j]["name"] == expected_tools[i]) {
                 found = true;
                 Value annotations = tools[j]["annotations"];
-                if(String(expected_tools[i]) == "preview") {
+                if(String(expected_tools[i]) == "version" || String(expected_tools[i]) == "preview") {
                     Expect(h, (bool)annotations["readOnlyHint"], "mcp-roundtrip: preview should be annotated read-only");
                     Expect(h, (bool)annotations["idempotentHint"], "mcp-roundtrip: preview should be annotated idempotent");
                     Expect(h, !(bool)annotations["destructiveHint"], "mcp-roundtrip: preview should not be destructive");
@@ -944,7 +1026,7 @@ void TestMcpRoundTrip(Harness& h)
         if(name == "preview" || name == "apply") {
             Value op_schema = tools[i]["inputSchema"]["properties"]["edits"]["items"]["properties"]["op"];
             Value op_enum = op_schema["enum"];
-            Expect(h, op_enum.GetCount() == 11, "mcp-roundtrip: op enum should list the canonical operations");
+            Expect(h, op_enum.GetCount() == 12, "mcp-roundtrip: op enum should list the canonical operations");
             const char *ops[] = {
                 "replace_exact",
                 "replace_all_exact",
@@ -953,6 +1035,7 @@ void TestMcpRoundTrip(Harness& h)
                 "insert_before_exact_line",
                 "insert_after_exact_line",
                 "delete_exact",
+                "create_file",
                 "rewrite_file",
                 "replace_between",
                 "replace_lines",
@@ -976,6 +1059,14 @@ void TestMcpRoundTrip(Harness& h)
                    "mcp-roundtrip: session schema should be an object");
         }
     }
+
+    CommandResult version_cmd = RunMcpRequest(h, root, BuildMcpToolCall(50, "version", "{}"));
+    Value version_rpc;
+    String version_body_json;
+    if(!Expect(h, ParseMcpJsonResult(version_cmd, version_rpc, version_body_json), "mcp-roundtrip: version call failed: " + version_cmd.out))
+        return;
+    Expect(h, (String)version_rpc["result"]["structuredContent"]["version"] == PatchtrackVersion(),
+           "mcp-roundtrip: version tool should return the active core version");
 
     String hash_body = BuildMcpToolCall(1, "hash", String("{\"path\":") + JString(abs) + "}");
     CommandResult hash_cmd = RunMcpRequest(h, root, hash_body);
@@ -1714,6 +1805,7 @@ int RunAll(Harness& h)
     TestBatchPrimitivesAndRollback(h);
     TestAliasesAndNoOpPreview(h);
     TestEngineFailures(h);
+    TestCreateAndDriftDiagnostics(h);
     TestTransportFailures(h);
     TestRollbackFailures(h);
     TestJournalStateAndSnapshots(h);

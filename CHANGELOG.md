@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-20
+- Added a shared `1.1.0` version source, exposed through MCP initialization, a read-only `version` tool, and the CLI. Agents can now check what they are talking to before they start negotiating with a binary.
+- Added explicit `create_file` and allowed `rewrite_file` to create missing targets. Transactions journal the creation state, restore removes a newly-created file after a failed commit, and rollback removes it on purpose.
+- Expanded guarded-edit diagnostics with raw and normalized hashes. Hash mismatch results now expose expected and actual digests, and can identify `newline_only` drift when callers supply the normalized guard.
+- Reworked full-file diff output into bounded, file-local hunks with `diff_summary` counts. Large edits remain valid; only the ceremonial wall of output was asked to leave.
+- Added protocol-harness coverage for creation, rollback-to-absence, overwrite refusal, newline-only drift, version reporting, and bounded large diffs.
+
 ## 2026-07-13
 - Renamed the canonical MCP surface to local tool names (`preview`, `apply`, `rollback`, `hash`, `history`, `recovery_scan`) while keeping host-side prefixes as display noise only. The host can keep its theatre; the wire format stays sane.
 - Added tool annotations for read-only, destructive, and idempotent hints, plus compatibility handling for prefixed tool calls so OpenCode does not have to relearn basic manners mid-release.

@@ -116,7 +116,13 @@ Keep args empty.
 
 ## OpenCode
 
-OpenCode is installed; PatchTrack MCP configuration and real-host validation are pending.
+OpenCode launches the same argument-free stdio server. Copy
+`integration/host_configs/opencode.example.json` into the OpenCode user config
+location as `opencode.json`, merge it with any existing configuration, and
+restart OpenCode. On Windows the default path is
+`C:\Users\<user>\.config\opencode\opencode.json`; when `XDG_CONFIG_HOME`
+is set, use `$XDG_CONFIG_HOME\opencode\opencode.json` instead. Confirm
+discovery with `version` before editing.
 
 Recommended server name:
 
@@ -167,6 +173,7 @@ Keep args empty.
 ## Exposed Tools
 
 The MCP server currently exposes:
+- `version`
 - `preview`
 - `apply`
 - `rollback`
@@ -180,12 +187,13 @@ Hosts may show a server prefix such as `patchtrack_hash`, but the server-local n
 
 Agents should prefer this flow:
 
-1. Call `hash` for every target file.
-2. Call `preview` with structured edits.
-3. Inspect `structuredContent.ok`, `files`, and diff content.
-4. Call `apply` only after preview is correct.
-5. Use `rollback` for undo instead of writing reverse edits manually.
-6. Call `recovery_scan` if startup reports pending or recovery-required transactions.
+1. Call `version` after the host connects when the active contract matters.
+2. Call `hash` for every existing target file and retain both returned hashes.
+3. Call `preview` with structured edits.
+4. Inspect `structuredContent.ok`, `files`, `diff_summary`, and diff content.
+5. Call `apply` only after preview is correct.
+6. Use `rollback` for undo instead of writing reverse edits manually.
+7. Call `recovery_scan` if startup reports pending or recovery-required transactions.
 
 For a normal one-file text replacement, the canonical MCP shape is `op: replace_exact`, `find: <original text>`, `text: <replacement text>`. That keeps the host from inventing aliases that the engine never asked for.
 If you supply `session.id`, keep the prefix `sess-` so rollback and recovery can find the journal tree later.

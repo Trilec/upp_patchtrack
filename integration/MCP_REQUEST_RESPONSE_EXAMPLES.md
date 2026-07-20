@@ -33,7 +33,7 @@ Response body shape:
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "patchtrack_mcp",
-      "version": "1.0.0"
+      "version": "1.1.0"
     },
     "capabilities": {
       "tools": {
@@ -60,6 +60,7 @@ Expected response includes these tool names:
   "id": 2,
   "result": {
     "tools": [
+      {"name": "version"},
       {"name": "preview"},
       {"name": "apply"},
       {"name": "rollback"},
@@ -69,6 +70,16 @@ Expected response includes these tool names:
     ]
   }
 }
+```
+
+## Version
+
+`version` takes an empty object and returns the active PatchTrack release,
+MCP protocol version, and supported feature flags. Hosts also receive the same
+release in `initialize.serverInfo.version`.
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"version","arguments":{}}}
 ```
 
 The real response includes full input schemas for each tool.
@@ -107,6 +118,8 @@ Response shape:
     "structuredContent": {
       "ok": true,
       "sha256": "...",
+      "normalized_sha256": "...",
+      "newline": "lf",
       "path": "E:\\apps\\github\\upp_patchtrack\\examples\\sample.txt"
     },
     "isError": false
@@ -164,6 +177,17 @@ Response checks agents should make:
 ```
 
 Preview must not mutate workspace files.
+
+## Creating A File
+
+Use `create_file` when the target must not already exist. It requires `text`
+and returns `FILE_ALREADY_EXISTS` if another writer created the target first.
+Use `rewrite_file` for a deliberate complete-file replacement; it can create a
+missing target. Both are journaled as creations and rollback removes the file.
+
+```json
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"apply","arguments":{"workspace_root":"E:\\apps\\github\\myrepo","summary":"add generated file","actor":"agent","edits":[{"op":"create_file","file":"generated\\config.txt","text":"enabled=true\n"}]}}}
+```
 
 ## Apply
 

@@ -63,7 +63,9 @@ Typical CLI workflow:
 
 ## MCP Surface
 `patchtrack_mcp` is the first-class MCP stdio frontend over `patchtrack_core`.
-The first public MCP release advertises `1.0.0` in `initialize`.
+PatchTrack `1.1.0` advertises its version in `initialize.serverInfo` and through
+the read-only `version` tool. This gives hosts and agents a reliable way to
+inspect the active edit contract before they start moving files around.
 
 Target host integrations:
 - Codex
@@ -72,11 +74,44 @@ Target host integrations:
 
 Host setup notes live in `integration/MCP_HOSTS.md`.
 
+### Install In Codex Or OpenCode
+
+Build `patchtrack_mcp` first, then register one argument-free stdio server named
+`patchtrack`. Do not use `--oneshot` outside test harnesses.
+
+Codex (`%USERPROFILE%\\.codex\\config.toml`):
+
+```toml
+[mcp_servers.patchtrack]
+command = "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe"
+args = []
+```
+
+OpenCode (`C:\\Users\\<user>\\.config\\opencode\\opencode.json` by default,
+or `$XDG_CONFIG_HOME\\opencode\\opencode.json` when `XDG_CONFIG_HOME` is set):
+
+```json
+{
+  "mcpServers": {
+    "patchtrack": {
+      "command": "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+Restart the host, inspect its MCP tool list, then call `version`. Full host
+notes, templates, permissions, and a stdio smoke command are in
+`integration/MCP_HOSTS.md` and `integration/host_configs/`.
+
 Raw request/response examples live in `integration/MCP_REQUEST_RESPONSE_EXAMPLES.md`.
 
 The v1 acceptance procedure lives in `integration/V1_RELEASE_CHECKLIST.md`.
 
 Current MCP tools:
+- `version`
 - `preview`
 - `apply`
 - `rollback`
@@ -153,6 +188,11 @@ Example:
 Required arguments:
 - `path`
 
+The structured MCP result includes the raw `sha256`, a
+`normalized_sha256`, and the observed newline style. Pass both hash values to
+an edit when possible so PatchTrack can identify newline-only drift separately
+from a real content change.
+
 Example:
 
 ```json
@@ -182,12 +222,22 @@ Current canonical edit operations:
 - `insert_before_exact_line`
 - `insert_after_exact_line`
 - `delete_exact`
+- `create_file`
 - `rewrite_file`
 - `replace_between`
 - `replace_lines`
 - `ensure_include`
 
 PatchTrack keeps `replace_exact` as the canonical single-replacement operation name and uses `text` for the replacement content field. The MCP schema and examples intentionally avoid `replace` and `replace_text` so agents do not have to guess.
+
+`create_file` requires `text` and refuses to overwrite an existing file.
+`rewrite_file` is the deliberate full-file operation: it replaces an existing
+file or creates a missing one. Both record whether a file was created, so a
+rollback removes a newly-created file instead of leaving an empty souvenir.
+
+For large rewrites, `diff` is bounded to keep MCP responses useful. Read
+`diff_summary` for added, removed, changed, and truncation counts; this avoids
+turning a perfectly valid large edit into a transport-sized incident.
 
 ## Why Structured Edits Instead Of Freeform Patches
 PatchTrack deliberately prefers structured edit intents over raw patch text.
@@ -234,6 +284,11 @@ Typical outcomes:
 - apply failures do not report success;
 - rollback failures do not restore files if rollback preconditions fail;
 - recovery records remain available when commit or rollback fails after mutation has begun.
+
+`HASH_MISMATCH` now returns `expected_sha256`, `actual_sha256`, and
+`difference_kind`. Supplying `expected_normalized_sha256` from `hash` lets the
+engine report `newline_only` drift rather than treating line-ending conversion
+as a particularly mysterious code change.
 
 ## Current Transaction Guarantees
 Current implemented guarantees:

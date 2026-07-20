@@ -18,6 +18,9 @@ Change log:
 
 namespace Upp {
 
+// Returns the PatchTrack release version shared by every frontend and tool result.
+const char *PatchtrackVersion();
+
 // Reads a request file with the same filesystem diagnostics used for workspace IO.
 bool PatchtrackReadRequestFile(const String& path, String& body, String& error);
 
@@ -38,6 +41,10 @@ bool PatchtrackRollback(Value req, String& result_json, String& error);
 
 // Returns the classic sha256-plus-path text format used by the CLI and harness.
 bool PatchtrackHash(const String& path, String& result_text, String& error);
+
+// Returns raw and normalized-content SHA-256 values for guarded edits and drift diagnostics.
+bool PatchtrackHashDetails(const String& path, String& sha256, String& normalized_sha256,
+                           String& newline, String& error);
 
 // Returns a human-readable history listing for the workspace journal.
 bool PatchtrackHistory(const String& workspace_root, String& result_text, String& error);

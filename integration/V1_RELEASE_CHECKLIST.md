@@ -2,7 +2,8 @@
 
 This is the acceptance checklist for the first public MCP release.
 
-The initialize response should advertise `1.0.0`, and any supplied `session.id` should begin with `sess-`.
+The initialize response should advertise `1.1.0`, the `version` tool should
+return the same release, and any supplied `session.id` should begin with `sess-`.
 
 ## Automated Windows Baseline
 

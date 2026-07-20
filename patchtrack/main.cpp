@@ -25,6 +25,7 @@ String UsageText()
         "  patchtrack preview request.json\n"
         "  patchtrack apply request.json\n"
         "  patchtrack rollback request.json\n"
+        "  patchtrack version\n"
         "  patchtrack selftest\n"
         "  patchtrack hash <file>\n"
         "  patchtrack history <workspace-root>\n"
@@ -142,6 +143,12 @@ int RunSelfTestCommand()
     return rc;
 }
 
+int RunVersionCommand()
+{
+    Cout() << PatchtrackVersion() << "\n";
+    return 0;
+}
+
 } // namespace
 
 CONSOLE_APP_MAIN
@@ -160,6 +167,8 @@ CONSOLE_APP_MAIN
         rc = RunJsonRequestCommand(command, cmd);
     else if(command == "selftest")
         rc = RunSelfTestCommand();
+    else if(command == "version")
+        rc = RunVersionCommand();
     else if(command == "hash")
         rc = RunHashCommand(cmd);
     else if(command == "history")
