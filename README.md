@@ -63,7 +63,7 @@ Typical CLI workflow:
 
 ## MCP Surface
 `patchtrack_mcp` is the first-class MCP stdio frontend over `patchtrack_core`.
-PatchTrack `1.1.0` advertises its version in `initialize.serverInfo` and through
+PatchTrack `1.1.1` advertises its version in `initialize.serverInfo` and through
 the read-only `version` tool. This gives hosts and agents a reliable way to
 inspect the active edit contract before they start moving files around.
 
@@ -92,12 +92,19 @@ or `$XDG_CONFIG_HOME\\opencode\\opencode.json` when `XDG_CONFIG_HOME` is set):
 
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "patchtrack": {
-      "command": "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe",
-      "args": [],
-      "env": {}
+      "type": "local",
+      "command": ["E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe"],
+      "enabled": true,
+      "timeout": 10000
     }
+  },
+  "permission": {
+    "patchtrack_*": "allow",
+    "patchtrack_apply": "ask",
+    "patchtrack_rollback": "ask"
   }
 }
 ```
@@ -406,7 +413,7 @@ E:\apps\github\upp_patchtrack\build\patchtrack_tests.exe
 Current status:
 - `patchtrack selftest`: passing
 - `patchtrack_mcp --selftest`: passing
-- protocol harness: `21 / 21` passing
+- protocol harness: `24 / 24` passing
 - real Windows MCP stdio probe: passing
 
 Latest observed transport benchmark on this machine:
@@ -460,9 +467,18 @@ If PowerShell script execution is disabled:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\verify.ps1 -SkipProtocolTests
 ```
 
+## Planned 1.2 Design Work
+The next release should consider, without quietly turning PatchTrack into an IDE:
+
+- `delete_file` with an expected hash, regular-file checks, snapshots, safe removal, and byte-exact rollback;
+- bounded structured history with newest-first results, filters, limits, and continuation cursors;
+- `move_file` only after overwrite, cross-volume, hash-guard, rollback, and case-only Windows rename rules are explicit;
+- explicit mixed-newline and encoding diagnostics for LF, CRLF, CR-only, BOM, invalid UTF-8, and legacy encodings;
+- journaling transaction-created parent directories so rollback removes only directories created by that transaction and still empty.
+
 ## What Is Still Not Solved
 Current important gaps:
-- canonical symlink/reparse-point containment and race-resistant no-follow opens for hostile workspaces;
+- fully race-resistant no-follow opens for hostile workspaces; existing symlink/reparse containment is checked, but a hostile actor can still race a path between validation and open;
 - full Unicode-path validation for Windows filesystem calls;
 - deeper permission diagnostics that can distinguish more specific causes such as read-only attributes, sandbox policy, or another process holding a lock;
 - external OS-failure reproduction beyond explicit fault hooks, such as real disk-full and managed-directory policy failures in automated runs;

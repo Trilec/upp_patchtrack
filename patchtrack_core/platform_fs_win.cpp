@@ -161,6 +161,57 @@ bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& no
     return false;
 }
 
+bool PlatformPathContained(const String& workspace_root, const String& path, bool allow_missing,
+                           String& detail)
+{
+    (void)allow_missing;
+    char root_buf[MAX_PATH];
+    char path_buf[MAX_PATH];
+    DWORD root_len = GetFullPathNameA(~workspace_root, MAX_PATH, root_buf, NULL);
+    DWORD path_len = GetFullPathNameA(~path, MAX_PATH, path_buf, NULL);
+    if(!root_len || root_len >= MAX_PATH || !path_len || path_len >= MAX_PATH) {
+        detail = "Windows could not canonicalize the workspace path.";
+        return false;
+    }
+
+    String root_full(root_buf, (int)root_len);
+    String path_full(path_buf, (int)path_len);
+    String folded_root = ToLower(root_full);
+    String folded_path = ToLower(path_full);
+    if(!folded_path.StartsWith(folded_root) ||
+       (folded_path.GetLength() > folded_root.GetLength() &&
+        folded_path[folded_root.GetLength()] != '\\' && folded_path[folded_root.GetLength()] != '/')) {
+        detail = "The resolved target is outside the workspace root.";
+        return false;
+    }
+
+    // Reparse-point traversal needs handle-based final-path checks to be fully
+    // race resistant. Reject existing reparse components in this pass.
+    String probe = root_full;
+    String remainder = path_full.Mid(root_full.GetLength());
+    while(remainder.GetLength()) {
+        while(remainder.GetLength() && (remainder[0] == '\\' || remainder[0] == '/'))
+            remainder = remainder.Mid(1);
+        int slash = -1;
+        for(int i = 0; i < remainder.GetLength(); i++)
+            if(remainder[i] == '\\' || remainder[i] == '/') {
+                slash = i;
+                break;
+            }
+        String component = slash < 0 ? remainder : remainder.Left(slash);
+        remainder = slash < 0 ? String() : remainder.Mid(slash);
+        if(component.IsEmpty())
+            continue;
+        probe = AppendFileName(probe, component);
+        DWORD attr = GetFileAttributesA(~probe);
+        if(attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_REPARSE_POINT)) {
+            detail = "Reparse-point traversal is not allowed for workspace targets.";
+            return false;
+        }
+    }
+    return true;
+}
+
 void PlatformExitAbruptly(int code)
 {
     ExitProcess((UINT)code);

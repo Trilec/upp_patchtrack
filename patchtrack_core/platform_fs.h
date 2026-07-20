@@ -25,6 +25,9 @@ bool PlatformCreateDirectory(const String& path, PlatformErrorCode& code);
 bool PlatformReadFileRaw(const String& path, String& out, PlatformErrorCode& code, bool& not_found);
 bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorCode& code);
 bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& not_found);
+// Confirms that a path and its existing parent chain remain inside the workspace.
+bool PlatformPathContained(const String& workspace_root, const String& path, bool allow_missing,
+                           String& detail);
 void PlatformExitAbruptly(int code);
 
 }

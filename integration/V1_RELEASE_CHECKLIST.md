@@ -2,7 +2,7 @@
 
 This is the acceptance checklist for the first public MCP release.
 
-The initialize response should advertise `1.1.0`, the `version` tool should
+The initialize response should advertise `1.1.1`, the `version` tool should
 return the same release, and any supplied `session.id` should begin with `sess-`.
 
 ## Automated Windows Baseline
@@ -19,7 +19,7 @@ Expected results:
 - `selftest: ok`
 - `mcp-selftest: ok`
 - `protocol-tests: ok`
-- `Passed: 21`, `Failed: 0`
+- `Passed: 24`, `Failed: 0`
 - `mcp-stdio-smoke: ok`
 
 The protocol harness covers preview no-write behavior, exact and anchor edits, validation failures, transaction snapshots, commit precondition re-checks, rollback blocking and recovery, injected write and journal failures, permission and disk-full diagnostics, stale claims, startup recovery, abrupt host termination, 1,000-edit batches, 1,000 sequential transactions, MCP round trips, and transport cost.

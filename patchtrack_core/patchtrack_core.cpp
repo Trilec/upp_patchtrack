@@ -23,7 +23,7 @@ using namespace Upp;
 
 namespace {
 
-const char *const kPatchtrackVersion = "1.1.0";
+const char *const kPatchtrackVersion = "1.1.1";
 
 struct Sha256Ctx {
     uint32_t state[8];
@@ -363,71 +363,181 @@ String JoinLines(const Vector<String>& lines)
     return out;
 }
 
-String MakeUnifiedDiff(const String& path, const String& before, const String& after)
+struct DiffResult : Moveable<DiffResult> {
+    String text;
+    int added = 0;
+    int removed = 0;
+    int changed = 0;
+    bool truncated = false;
+    bool approximate = false;
+};
+
+struct DiffOp : Moveable<DiffOp> {
+    char kind = ' ';
+    String text;
+    int old_line = 0;
+    int new_line = 0;
+};
+
+DiffResult BuildDiffResult(const String& path, const String& before, const String& after)
 {
     Vector<String> a = SplitLinesKeepEmpty(before);
     Vector<String> b = SplitLinesKeepEmpty(after);
+    const int kWorkLimit = 250000;
+    bool exact = a.GetCount() > 0 && b.GetCount() > 0 && a.GetCount() * b.GetCount() <= kWorkLimit;
+    DiffResult result;
+    result.text << "--- a/" << path << "\n+++ b/" << path << "\n";
 
-    String out;
-    out << "--- a/" << path << "\n";
-    out << "+++ b/" << path << "\n";
-
-    int prefix = 0;
-    while(prefix < a.GetCount() && prefix < b.GetCount() && a[prefix] == b[prefix])
-        prefix++;
-
-    int suffix = 0;
-    while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
-          a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
-        suffix++;
-
-    if(prefix == a.GetCount() && prefix == b.GetCount()) {
-        out << " no changes\n";
-        return out;
+    if(!exact) {
+        int prefix = 0;
+        while(prefix < a.GetCount() && prefix < b.GetCount() && a[prefix] == b[prefix])
+            prefix++;
+        int suffix = 0;
+        while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
+              a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
+            suffix++;
+        result.removed = a.GetCount() - prefix - suffix;
+        result.added = b.GetCount() - prefix - suffix;
+        result.changed = min(result.removed, result.added);
+        result.approximate = true;
+        result.text << "@@ -" << (prefix + 1) << "," << result.removed
+                    << " +" << (prefix + 1) << "," << result.added << " @@\n"
+                    << "... bounded diff fallback; unchanged middle lines are not expanded; see diff_summary\n";
+        result.truncated = true;
+        return result;
     }
 
-    int old_changed = a.GetCount() - prefix - suffix;
-    int new_changed = b.GetCount() - prefix - suffix;
-    out << "@@ -" << (prefix + 1) << "," << old_changed
-        << " +" << (prefix + 1) << "," << new_changed << " @@\n";
-
-    const int kDiffLineLimit = 80;
-    int shown = 0;
-    for(int i = 0; i < old_changed; i++) {
-        if(shown++ == kDiffLineLimit) {
-            out << "... " << (old_changed + new_changed - kDiffLineLimit) << " changed lines omitted; see diff_summary\n";
-            return out;
+    Vector<DiffOp> ops;
+    int i = 0, j = 0, old_line = 1, new_line = 1;
+    // Equal-length files do not need alignment heuristics: compare each line
+    // at the same position so a run of replacements stays truthful.
+    if(a.GetCount() == b.GetCount()) {
+        for(int k = 0; k < a.GetCount(); k++) {
+            if(a[k] == b[k]) {
+                DiffOp& op = ops.Add();
+                op.kind = ' ';
+                op.text = a[k];
+                op.old_line = op.new_line = k + 1;
+            }
+            else {
+                DiffOp& removed = ops.Add();
+                removed.kind = '-';
+                removed.text = a[k];
+                removed.old_line = removed.new_line = k + 1;
+                DiffOp& added = ops.Add();
+                added.kind = '+';
+                added.text = b[k];
+                added.old_line = added.new_line = k + 1;
+                result.removed++;
+                result.added++;
+            }
         }
-        out << "-" << a[prefix + i] << "\n";
     }
-    for(int i = 0; i < new_changed; i++) {
-        if(shown++ == kDiffLineLimit) {
-            out << "... " << (old_changed + new_changed - kDiffLineLimit) << " changed lines omitted; see diff_summary\n";
-            return out;
+    else while(i < a.GetCount() || j < b.GetCount()) {
+        DiffOp& op = ops.Add();
+        op.old_line = old_line;
+        op.new_line = new_line;
+        if(i < a.GetCount() && j < b.GetCount() && a[i] == b[j]) {
+            op.kind = ' ';
+            op.text = a[i++];
+            old_line++;
+            new_line++;
         }
-        out << "+" << b[prefix + i] << "\n";
+        else if(j >= b.GetCount() || (i < a.GetCount() &&
+                                      (j >= b.GetCount() ||
+                                       (i + 1 < a.GetCount() && a[i + 1] == b[j])))) {
+            op.kind = '-';
+            op.text = a[i++];
+            old_line++;
+            result.removed++;
+        }
+        else {
+            op.kind = '+';
+            op.text = b[j++];
+            new_line++;
+            result.added++;
+        }
     }
-    return out;
+    result.changed = min(result.added, result.removed);
+
+    Vector<int> ranges;
+    for(int k = 0; k < ops.GetCount(); k++) {
+        if(ops[k].kind == ' ') continue;
+        int start = max(0, k - 2);
+        int end = min(ops.GetCount(), k + 3);
+        if(ranges.GetCount() >= 2 && start <= ranges[ranges.GetCount() - 1])
+            ranges[ranges.GetCount() - 1] = end;
+        else {
+            ranges.Add(start);
+            ranges.Add(end);
+        }
+    }
+
+    const int kVisibleChangedLimit = 80;
+    int visible_changed = 0;
+    for(int r = 0; r < ranges.GetCount(); r += 2) {
+        int start = ranges[r];
+        int end = ranges[r + 1];
+        int old_start = ops[start].old_line;
+        int new_start = ops[start].new_line;
+        int old_count = 0, new_count = 0;
+        for(int k = start; k < end; k++) {
+            if(ops[k].kind != '+') old_count++;
+            if(ops[k].kind != '-') new_count++;
+        }
+        result.text << "@@ -" << old_start << "," << old_count
+                    << " +" << new_start << "," << new_count << " @@\n";
+        for(int k = start; k < end; k++) {
+            if(ops[k].kind != ' ') {
+                if(visible_changed >= kVisibleChangedLimit) {
+                    result.truncated = true;
+                    result.text << "... more changed lines omitted; see diff_summary\n";
+                    return result;
+                }
+                visible_changed++;
+            }
+            result.text.Cat(ops[k].kind);
+            result.text << ops[k].text << "\n";
+        }
+    }
+    if(ranges.IsEmpty())
+        result.text << " no changes\n";
+    return result;
+}
+
+String MakeUnifiedDiff(const String& path, const String& before, const String& after)
+{
+    return BuildDiffResult(path, before, after).text;
+}
+
+// Finds the only match in one pass, avoiding a count scan followed by a second search.
+int FindUniqueOccurrence(const String& s, const String& needle)
+{
+    if(needle.IsEmpty())
+        return -1;
+    int found = -1;
+    int pos = 0;
+    for(;;) {
+        int match = s.Find(needle, pos);
+        if(match < 0)
+            return found;
+        if(found >= 0)
+            return -2;
+        found = match;
+        pos = match + needle.GetLength();
+    }
+}
+
+String BuildDiffSummaryJson(const DiffResult& result)
+{
+    return Format("{\"lines_added\": %d, \"lines_removed\": %d, \"lines_changed\": %d, \"truncated\": %s, \"approximate\": %s}",
+                  result.added, result.removed, result.changed,
+                  result.truncated ? "true" : "false", result.approximate ? "true" : "false");
 }
 
 String BuildDiffSummaryJson(const String& before, const String& after)
 {
-    Vector<String> a = SplitLinesKeepEmpty(before);
-    Vector<String> b = SplitLinesKeepEmpty(after);
-    int prefix = 0;
-    while(prefix < a.GetCount() && prefix < b.GetCount() && a[prefix] == b[prefix])
-        prefix++;
-    int suffix = 0;
-    while(suffix < a.GetCount() - prefix && suffix < b.GetCount() - prefix &&
-          a[a.GetCount() - 1 - suffix] == b[b.GetCount() - 1 - suffix])
-        suffix++;
-
-    int removed = a.GetCount() - prefix - suffix;
-    int added = b.GetCount() - prefix - suffix;
-    int changed = min(removed, added);
-    bool truncated = removed + added > 80;
-    return Format("{\"lines_added\": %d, \"lines_removed\": %d, \"lines_changed\": %d, \"truncated\": %s}",
-                  added, removed, changed, truncated ? "true" : "false");
+    return BuildDiffSummaryJson(BuildDiffResult("summary", before, after));
 }
 
 String Slug(String s, int max_len = 16)
@@ -493,14 +603,19 @@ bool IsAbsoluteOrUnsafePath(const String& rel)
         return true;
     if(rel.GetLength() >= 2 && rel[1] == ':')
         return true;
-    if(rel.Find("..") >= 0 || rel.Find('\0') >= 0)
-        return true;
-    String normalized = rel;
-    normalized.Replace("\\\\", "/");
-    int slash = normalized.Find('/');
-    String first = ToLower(normalized.Left(slash < 0 ? normalized.GetCount() : slash));
-    if(first == ".patchtrack")
-        return true;
+    String component;
+    for(int i = 0; i <= rel.GetLength(); i++) {
+        char c = i < rel.GetLength() ? rel[i] : '/';
+        if(c == '\0')
+            return true;
+        if(c != '/' && c != '\\') {
+            component.Cat(c);
+            continue;
+        }
+        if(component == ".." || ToLower(component) == ".patchtrack")
+            return true;
+        component.Clear();
+    }
     return false;
 }
 
@@ -1139,26 +1254,30 @@ struct PlannedFile : Moveable<PlannedFile> {
     String rel;
     TextFile original;
     String next_text;
+    String final_raw;
+    String final_hash;
+    String final_diff;
+    String final_diff_summary;
+    bool finalized = false;
     bool changed = false;
 };
 
-int FindPlanned(Vector<PlannedFile>& files, const String& rel)
-{
-    for(int i = 0; i < files.GetCount(); i++)
-        if(files[i].rel == rel)
-            return i;
-    return -1;
-}
-
 bool EnsurePlanned(Vector<PlannedFile>& files, const String& root, const String& rel,
-                   bool allow_missing, PlannedFile*& pf, String& error)
+                   Index<String>& planned_index, bool allow_missing,
+                   PlannedFile*& pf, String& error)
 {
     if(IsAbsoluteOrUnsafePath(rel)) {
         error = "UNSAFE_PATH: " + rel;
         return false;
     }
 
-    int idx = FindPlanned(files, rel);
+    String containment_detail;
+    if(!PlatformPathContained(root, JoinPath(root, rel), allow_missing, containment_detail)) {
+        error = "UNSAFE_PATH: " + rel + "||why=" + containment_detail;
+        return false;
+    }
+
+    int idx = planned_index.Find(rel);
     if(idx >= 0) {
         pf = &files[idx];
         return true;
@@ -1173,6 +1292,7 @@ bool EnsurePlanned(Vector<PlannedFile>& files, const String& root, const String&
         MakeMissingTextFile(path, rel, add.original);
     }
     add.next_text = add.original.text;
+    planned_index.Add(rel);
     pf = &add;
     return true;
 }
@@ -1199,7 +1319,8 @@ bool VerifyHashGuard(Value edit, const PlannedFile& pf, String& error)
     return true;
 }
 
-bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, String& error)
+bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root,
+                  Index<String>& planned_index, String& error)
 {
     String op = GetJsonString(edit["op"]);
     String rel = GetJsonString(edit["file"]);
@@ -1210,7 +1331,7 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
 
     bool can_create = op == "create_file" || op == "rewrite_file";
     PlannedFile* pf = NULL;
-    if(!EnsurePlanned(files, root, rel, can_create, pf, error))
+    if(!EnsurePlanned(files, root, rel, planned_index, can_create, pf, error))
         return false;
     if(!VerifyHashGuard(edit, *pf, error))
         return false;
@@ -1221,17 +1342,15 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
         String find = NormalizeLf(GetJsonString(edit["find"]));
         String repl = GetPayloadText(edit);
 
-        int count = CountOccurrences(text, find);
-        if(count == 0) {
+        int pos = FindUniqueOccurrence(text, find);
+        if(pos == -1) {
             error = "NO_MATCH: " + rel;
             return false;
         }
-        if(count > 1) {
+        if(pos == -2) {
             error = "AMBIGUOUS_MATCH: " + rel;
             return false;
         }
-
-        int pos = text.Find(find);
         text = ReplaceFirstAt(text, pos, find.GetLength(), repl);
         pf->changed = true;
         return true;
@@ -1256,17 +1375,15 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
         String anchor = NormalizeLf(GetJsonString(edit["anchor"]));
         String insert = GetPayloadText(edit);
 
-        int count = CountOccurrences(text, anchor);
-        if(count == 0) {
+        int pos = FindUniqueOccurrence(text, anchor);
+        if(pos == -1) {
             error = "NO_MATCH: " + rel;
             return false;
         }
-        if(count > 1) {
+        if(pos == -2) {
             error = "AMBIGUOUS_MATCH: " + rel;
             return false;
         }
-
-        int pos = text.Find(anchor);
         text = text.Left(pos) + insert + text.Mid(pos);
         pf->changed = true;
         return true;
@@ -1276,17 +1393,16 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
         String anchor = NormalizeLf(GetJsonString(edit["anchor"]));
         String insert = GetPayloadText(edit);
 
-        int count = CountOccurrences(text, anchor);
-        if(count == 0) {
+        int pos = FindUniqueOccurrence(text, anchor);
+        if(pos == -1) {
             error = "NO_MATCH: " + rel;
             return false;
         }
-        if(count > 1) {
+        if(pos == -2) {
             error = "AMBIGUOUS_MATCH: " + rel;
             return false;
         }
-
-        int pos = text.Find(anchor) + anchor.GetLength();
+        pos += anchor.GetLength();
         text = text.Left(pos) + insert + text.Mid(pos);
         pf->changed = true;
         return true;
@@ -1295,17 +1411,15 @@ bool ApplyOneEdit(Value edit, Vector<PlannedFile>& files, const String& root, St
     if(op == "delete_exact") {
         String find = NormalizeLf(GetJsonString(edit["find"]));
 
-        int count = CountOccurrences(text, find);
-        if(count == 0) {
+        int pos = FindUniqueOccurrence(text, find);
+        if(pos == -1) {
             error = "NO_MATCH: " + rel;
             return false;
         }
-        if(count > 1) {
+        if(pos == -2) {
             error = "AMBIGUOUS_MATCH: " + rel;
             return false;
         }
-
-        int pos = text.Find(find);
         text = ReplaceFirstAt(text, pos, find.GetLength(), "");
         pf->changed = true;
         return true;
@@ -1456,6 +1570,19 @@ bool ValidatePlanned(Value req, const Vector<PlannedFile>& files, String& error)
     return true;
 }
 
+void FinalizePlannedOutputs(Vector<PlannedFile>& files)
+{
+    for(int i = 0; i < files.GetCount(); i++) {
+        PlannedFile& pf = files[i];
+        pf.final_raw = BuildRawBytes(pf.original, pf.next_text);
+        pf.final_hash = Sha256String(pf.final_raw);
+        DiffResult diff = BuildDiffResult(pf.rel, pf.original.text, pf.next_text);
+        pf.final_diff = diff.text;
+        pf.final_diff_summary = BuildDiffSummaryJson(diff);
+        pf.finalized = true;
+    }
+}
+
 bool Plan(Value req, Vector<PlannedFile>& files, String& error)
 {
     if(!ValidateRequestShape(req, error))
@@ -1468,12 +1595,16 @@ bool Plan(Value req, Vector<PlannedFile>& files, String& error)
         return false;
     }
 
+    Index<String> planned_index;
     for(int i = 0; i < edits.GetCount(); i++) {
-        if(!ApplyOneEdit(edits[i], files, root, error))
+        if(!ApplyOneEdit(edits[i], files, root, planned_index, error))
             return false;
     }
 
-    return ValidatePlanned(req, files, error);
+    if(!ValidatePlanned(req, files, error))
+        return false;
+    FinalizePlannedOutputs(files);
+    return true;
 }
 
 String BuildPreviewJson(bool ok, const String& error, const Vector<PlannedFile>& files, const String& startup_scan_json = "{}")
@@ -1494,9 +1625,12 @@ String BuildPreviewJson(bool ok, const String& error, const Vector<PlannedFile>&
         out << "      \"changed\": " << JBool(pf.changed) << ",\n";
         out << "      \"created\": " << JBool(!pf.original.existed) << ",\n";
         out << "      \"hash_before\": " << JString(pf.original.sha256) << ",\n";
-        out << "      \"hash_after\": " << JString(Sha256String(BuildRawBytes(pf.original, pf.next_text))) << ",\n";
-        out << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << ",\n";
-        out << "      \"diff_summary\": " << BuildDiffSummaryJson(pf.original.text, pf.next_text) << "\n";
+        String diff = pf.finalized ? pf.final_diff : MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text);
+        String diff_summary = pf.finalized ? pf.final_diff_summary : BuildDiffSummaryJson(pf.original.text, pf.next_text);
+        String hash_after = pf.finalized ? pf.final_hash : String();
+        out << "      \"hash_after\": " << JString(hash_after) << ",\n";
+        out << "      \"diff\": " << JString(diff) << ",\n";
+        out << "      \"diff_summary\": " << diff_summary << "\n";
         out << "    }";
     }
     out << "\n  ]\n";
@@ -1606,6 +1740,10 @@ struct RecoveryScanInfo : Moveable<RecoveryScanInfo> {
     Vector<String> pending_transactions;
     Vector<String> recovery_required_transactions;
     Vector<String> temporary_artifacts;
+    int directories_scanned = 0;
+    int files_examined = 0;
+    bool truncated = false;
+    String scan_scope = "transaction_metadata";
 };
 
 String BuildJsonStringArray(const Vector<String>& items);
@@ -1613,6 +1751,7 @@ String BuildJsonStringArray(const Vector<String>& items);
 struct ClaimGuard : NoCopy {
     String claim_file;
     bool active = false;
+    int writes = 0;
 
     ~ClaimGuard()
     {
@@ -1752,15 +1891,23 @@ String BuildClaimArrayJson(const Vector<SessionClaimInfo>& claims)
     return out;
 }
 
-void CollectTemporaryArtifacts(const String& dir, Vector<String>& artifacts)
+void CollectTemporaryArtifacts(const String& dir, RecoveryScanInfo& scan)
 {
+    if(scan.directories_scanned >= 256 || scan.files_examined >= 10000) {
+        scan.truncated = true;
+        return;
+    }
+    scan.directories_scanned++;
     FindFile ff(AppendFileName(dir, "*"));
     while(ff) {
+        scan.files_examined++;
         if(ff.IsFile() && ff.GetName().Find(".patchtrack-tmp-") >= 0)
-            artifacts.Add(AppendFileName(dir, ff.GetName()));
-        else if(ff.IsFolder() && ff.GetName() != "." && ff.GetName() != "..")
-            CollectTemporaryArtifacts(AppendFileName(dir, ff.GetName()), artifacts);
+            scan.temporary_artifacts.Add(AppendFileName(dir, ff.GetName()));
         ff.Next();
+        if(scan.files_examined >= 10000) {
+            scan.truncated = true;
+            break;
+        }
     }
 }
 
@@ -1773,7 +1920,11 @@ String BuildRecoveryScanJson(const RecoveryScanInfo& scan)
         << "  \"stale_claims\": " << BuildClaimArrayJson(scan.stale_claims) << ",\n"
         << "  \"pending_transactions\": " << BuildJsonStringArray(scan.pending_transactions) << ",\n"
         << "  \"recovery_required_transactions\": " << BuildJsonStringArray(scan.recovery_required_transactions) << ",\n"
-        << "  \"temporary_artifacts\": " << BuildJsonStringArray(scan.temporary_artifacts) << "\n"
+        << "  \"temporary_artifacts\": " << BuildJsonStringArray(scan.temporary_artifacts) << ",\n"
+        << "  \"directories_scanned\": " << scan.directories_scanned << ",\n"
+        << "  \"files_examined\": " << scan.files_examined << ",\n"
+        << "  \"truncated\": " << JBool(scan.truncated) << ",\n"
+        << "  \"scan_scope\": " << JString(scan.scan_scope) << "\n"
         << "}";
     return out;
 }
@@ -1782,6 +1933,35 @@ bool PersistRecoveryScan(const String& root, const RecoveryScanInfo& scan, const
 {
     if(!DirectoryExists(JournalRoot(root)))
         return true;
+
+    String current_state = BuildClaimArrayJson(scan.active_claims)
+                         + BuildClaimArrayJson(scan.stale_claims)
+                         + BuildJsonStringArray(scan.pending_transactions)
+                         + BuildJsonStringArray(scan.recovery_required_transactions)
+                         + BuildJsonStringArray(scan.temporary_artifacts);
+    if(FileExists(RecoveryScanPath(root))) {
+        try {
+            Value old = ParseJSON(LoadFile(RecoveryScanPath(root)));
+            String old_state = AsJSON(old["active_claims"], true)
+                             + AsJSON(old["stale_claims"], true)
+                             + AsJSON(old["pending_transactions"], true)
+                             + AsJSON(old["recovery_required_transactions"], true)
+                             + AsJSON(old["temporary_artifacts"], true);
+            Value current_active = ParseJSON(BuildClaimArrayJson(scan.active_claims));
+            Value current_stale = ParseJSON(BuildClaimArrayJson(scan.stale_claims));
+            Value current_pending = ParseJSON(BuildJsonStringArray(scan.pending_transactions));
+            Value current_recovery = ParseJSON(BuildJsonStringArray(scan.recovery_required_transactions));
+            Value current_temporary = ParseJSON(BuildJsonStringArray(scan.temporary_artifacts));
+            current_state = AsJSON(current_active, true) + AsJSON(current_stale, true)
+                          + AsJSON(current_pending, true) + AsJSON(current_recovery, true)
+                          + AsJSON(current_temporary, true);
+            if(old_state == current_state)
+                return true;
+        }
+        catch(CParser::Error) {
+            // A damaged report is replaced with the next valid state.
+        }
+    }
     String error;
     return WriteFileDetailed(RecoveryScanPath(root), BuildRecoveryScanJson(scan) + "\n", "recovery_scan", "write_transaction_log", inject_fault, "permission_denied_transaction_log", error);
 }
@@ -1789,7 +1969,9 @@ bool PersistRecoveryScan(const String& root, const RecoveryScanInfo& scan, const
 bool RunStartupRecoveryScan(const String& root,
                             RecoveryScanInfo& scan,
                             const String& inject_fault = String(),
-                            bool persist = true)
+                            bool persist = true,
+                            bool cleanup_stale_claims = true,
+                            const Vector<String>* extra_dirs = NULL)
 {
     String journal = JournalRoot(root);
     if(!DirectoryExists(journal))
@@ -1806,7 +1988,8 @@ bool RunStartupRecoveryScan(const String& root,
                 if(LoadClaimInfo(claim_file, claim)) {
                     if(claim.expires_epoch > 0 && claim.expires_epoch <= now) {
                         scan.stale_claims.Add(pick(claim));
-                        FileDelete(claim_file);
+                        if(cleanup_stale_claims)
+                            FileDelete(claim_file);
                     }
                     else {
                         scan.active_claims.Add(pick(claim));
@@ -1816,8 +1999,6 @@ bool RunStartupRecoveryScan(const String& root,
             ff.Next();
         }
     }
-
-    CollectTemporaryArtifacts(root, scan.temporary_artifacts);
 
     FindFile sess(AppendFileName(journal, "sess-*"));
     while(sess) {
@@ -1845,6 +2026,31 @@ bool RunStartupRecoveryScan(const String& root,
             }
         }
         sess.Next();
+    }
+
+    Vector<String> scan_dirs;
+    scan_dirs.Add(root);
+    scan_dirs.Add(journal);
+    if(DirectoryExists(claims_root))
+        scan_dirs.Add(claims_root);
+    FindFile session_dirs(AppendFileName(journal, "sess-*"));
+    while(session_dirs) {
+        if(session_dirs.IsFolder())
+            scan_dirs.Add(AppendFileName(journal, session_dirs.GetName()));
+        session_dirs.Next();
+    }
+    if(extra_dirs)
+        for(int i = 0; i < extra_dirs->GetCount(); i++)
+            scan_dirs.Add((*extra_dirs)[i]);
+    for(int i = 0; i < scan_dirs.GetCount(); i++) {
+        bool duplicate = false;
+        for(int j = 0; j < i; j++)
+            if(scan_dirs[j] == scan_dirs[i]) {
+                duplicate = true;
+                break;
+            }
+        if(!duplicate && DirectoryExists(scan_dirs[i]))
+            CollectTemporaryArtifacts(scan_dirs[i], scan);
     }
 
     if(persist)
@@ -1923,7 +2129,8 @@ String SnapshotName(const String& tran_id, const String& rel)
 
 String BuildApplyFilesJson(const Vector<PlannedFile>& files,
                            const Vector<String>& snapshot_rel,
-                           const Vector<String>& hash_after)
+                           const Vector<String>& hash_after,
+                           bool include_visual = true)
 {
     String files_json;
     files_json << "[\n";
@@ -1941,10 +2148,11 @@ String BuildApplyFilesJson(const Vector<PlannedFile>& files,
                    << "      \"created\": " << JBool(!pf.original.existed) << ",\n"
                    << "      \"hash_before\": " << JString(pf.original.sha256) << ",\n"
                    << "      \"hash_after\": " << JString(hash_after[changed]) << ",\n"
-                   << "      \"snapshot_before\": " << JString(snapshot_rel[changed]) << ",\n"
-                   << "      \"diff\": " << JString(MakeUnifiedDiff(pf.rel, pf.original.text, pf.next_text)) << ",\n"
-                   << "      \"diff_summary\": " << BuildDiffSummaryJson(pf.original.text, pf.next_text) << "\n"
-                   << "    }";
+                   << "      \"snapshot_before\": " << JString(snapshot_rel[changed]);
+        if(include_visual)
+            files_json << ",\n      \"diff\": " << JString(pf.final_diff)
+                       << ",\n      \"diff_summary\": " << pf.final_diff_summary;
+        files_json << "\n    }";
         changed++;
     }
     files_json << "\n  ]";
@@ -2064,8 +2272,12 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
     String summary = GetJsonString(req["summary"], "PatchTrack transaction");
     String actor = GetJsonString(req["actor"], "patchtrack");
 
+    Vector<String> target_dirs;
+    for(int i = 0; i < files.GetCount(); i++)
+        if(files[i].changed)
+            target_dirs.Add(GetFileFolder(files[i].original.path));
     RecoveryScanInfo startup_scan;
-    RunStartupRecoveryScan(root, startup_scan, inject_fault, true);
+    RunStartupRecoveryScan(root, startup_scan, inject_fault, true, true, &target_dirs);
 
     Vector<String> claimed_files = CollectChangedFiles(files);
     if(!CheckClaimConflicts(startup_scan, claimed_files, "code_edit", session_id, error))
@@ -2085,6 +2297,7 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
             return false;
         claim_guard.claim_file = claim.claim_file;
         claim_guard.active = true;
+        claim_guard.writes = 1;
     }
 
     String tran_id = "tran-" + Id10();
@@ -2104,7 +2317,7 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
         if(!WriteFileDetailed(snap_abs, pf.original.raw, "snapshot_before", "write_file", inject_fault, "permission_denied_snapshot_write", error))
             return false;
         snapshot_rel.Add(snap);
-        planned_after_hashes.Add(Sha256String(BuildRawBytes(pf.original, pf.next_text)));
+        planned_after_hashes.Add(pf.final_hash);
     }
 
     if(inject_fault == "write_failed_snapshot") {
@@ -2112,7 +2325,7 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
         return false;
     }
 
-    String planned_files_json = BuildApplyFilesJson(files, snapshot_rel, planned_after_hashes);
+    String planned_files_json = BuildApplyFilesJson(files, snapshot_rel, planned_after_hashes, false);
     if(!SaveTransactionRecord(tran_file, tran_id, session_id, actor,
                               "pending", summary, planned_files_json,
                               checks, String(), String(), String(), error,
@@ -2120,23 +2333,33 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
         return false;
 
     int writes_completed = 0;
+    TimeStop claim_heartbeat_timer;
     for(int i = 0; i < files.GetCount(); i++) {
         PlannedFile& pf = files[i];
         if(!pf.changed)
             continue;
 
-        if(claim_guard.active) {
+        if(claim_guard.active && claim_heartbeat_timer.Elapsed() >= max(1000, claim.lease_seconds * 1000 / 3)) {
             String claim_error;
             if(!SaveClaimInfo(root, claim, claim_error, inject_fault))
                 return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
                                             planned_files_json, checks, files, written_indices,
                                             claim_error, error, inject_fault);
+            claim_guard.writes++;
+            claim_heartbeat_timer.Reset();
         }
 
         if(inject_fault == "write_failed_before_first_write")
             return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
                                         planned_files_json, checks, files, written_indices,
                                         "WRITE_FAILED: injected before first write", error, inject_fault);
+
+        String containment_detail;
+        if(!PlatformPathContained(root, pf.original.path, !pf.original.existed, containment_detail))
+            return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
+                                        planned_files_json, checks, files, written_indices,
+                                        "UNSAFE_PATH: " + pf.rel + "||why=" + containment_detail,
+                                        error, inject_fault);
 
         TextFile latest;
         String read_error;
@@ -2176,7 +2399,8 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
                                         error, inject_fault);
         }
 
-        if(!SaveTextFilePreserving(pf.original, pf.next_text, read_error, inject_fault, "permission_denied_write_target", "apply_write"))
+        if(!WriteFileDetailed(pf.original.path, pf.final_raw, "apply_write", "write_file",
+                              inject_fault, "permission_denied_write_target", read_error))
             return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
                                         planned_files_json, checks, files, written_indices,
                                         read_error, error, inject_fault);
@@ -2208,7 +2432,8 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
         actual_after_hashes.Add(after.sha256);
     }
 
-    String applied_files_json = BuildApplyFilesJson(files, snapshot_rel, actual_after_hashes);
+    String applied_files_json = BuildApplyFilesJson(files, snapshot_rel, actual_after_hashes, false);
+    String response_files_json = BuildApplyFilesJson(files, snapshot_rel, actual_after_hashes, true);
 
     if(inject_fault == "write_failed_transaction_log")
         return FinalizeApplyFailure(tran_file, tran_id, session_id, actor, summary,
@@ -2232,7 +2457,8 @@ bool ApplyWrite(Value req, Vector<PlannedFile>& files, String& result_json, Stri
                 << "  \"session_id\": " << JString(session_id) << ",\n"
                 << "  \"transaction_file\": " << JString(tran_file) << ",\n"
                 << "  \"startup_scan\": " << BuildRecoveryScanJson(startup_scan) << ",\n"
-                << "  \"files\": " << applied_files_json << "\n"
+                << "  \"claim_writes\": " << claim_guard.writes << ",\n"
+                << "  \"files\": " << response_files_json << "\n"
                 << "}\n";
 
     return true;
@@ -2398,6 +2624,12 @@ bool Rollback(Value req, String& result_json, String& error)
         String path = JoinPath(root, rel);
         String snap_path = AppendFileName(session_dir, snapshot_rel);
 
+        String containment_detail;
+        if(!PlatformPathContained(root, path, false, containment_detail)) {
+            error = "UNSAFE_PATH: " + rel + "||why=" + containment_detail;
+            return false;
+        }
+
         TextFile current;
         if(!ReadTextFile(path, rel, current, error, inject_fault, "permission_denied_read_target", "rollback_preflight"))
             return false;
@@ -2424,7 +2656,10 @@ bool Rollback(Value req, String& result_json, String& error)
     }
 
     RecoveryScanInfo startup_scan;
-    RunStartupRecoveryScan(root, startup_scan, inject_fault, true);
+    Vector<String> target_dirs;
+    for(int i = 0; i < plans.GetCount(); i++)
+        target_dirs.Add(GetFileFolder(plans[i].path));
+    RunStartupRecoveryScan(root, startup_scan, inject_fault, true, true, &target_dirs);
 
     Vector<String> claimed_files = CollectRollbackFiles(plans);
     if(!CheckClaimConflicts(startup_scan, claimed_files, "rollback", session_id, error))
@@ -2444,6 +2679,7 @@ bool Rollback(Value req, String& result_json, String& error)
             return false;
         claim_guard.claim_file = claim.claim_file;
         claim_guard.active = true;
+        claim_guard.writes = 1;
     }
 
     String files_json = BuildRollbackFilesJson(plans, tran_id);
@@ -2454,13 +2690,16 @@ bool Rollback(Value req, String& result_json, String& error)
         return false;
 
     Vector<int> restored_indices;
+    TimeStop claim_heartbeat_timer;
     for(int i = 0; i < plans.GetCount(); i++) {
-        if(claim_guard.active) {
+        if(claim_guard.active && claim_heartbeat_timer.Elapsed() >= max(1000, claim.lease_seconds * 1000 / 3)) {
             String claim_error;
             if(!SaveClaimInfo(root, claim, claim_error, inject_fault))
                 return FinalizeRollbackFailure(rb_file, rb_id, session_id, actor,
                                                summary, tran_id, files_json, checks, plans,
                                                restored_indices, claim_error, error, inject_fault);
+            claim_guard.writes++;
+            claim_heartbeat_timer.Reset();
         }
 
         if(inject_fault == "rollback_failed_before_first_write")
@@ -2510,6 +2749,7 @@ bool Rollback(Value req, String& result_json, String& error)
                 << "  \"rollback_transaction_id\": " << JString(rb_id) << ",\n"
                 << "  \"rolled_back\": " << JString(tran_id) << ",\n"
                 << "  \"startup_scan\": " << BuildRecoveryScanJson(startup_scan) << ",\n"
+                << "  \"claim_writes\": " << claim_guard.writes << ",\n"
                 << "  \"files\": " << files_json << "\n"
                 << "}\n";
     return true;
@@ -2920,9 +3160,11 @@ bool PatchtrackPreview(Value req, String& result_json, String& error)
     bool ok = Plan(req, files, error);
 
     RecoveryScanInfo startup_scan;
+    // Preview observes recovery state but must not clean or persist metadata.
     RunStartupRecoveryScan(GetJsonString(req["workspace_root"], GetCurrentDirectory()),
                            startup_scan,
                            GetTestingFault(req),
+                           false,
                            false);
 
     result_json = BuildPreviewJson(ok, error, files, BuildRecoveryScanJson(startup_scan));

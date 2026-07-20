@@ -112,12 +112,54 @@ String BuildJsonRpcError(const String& id_literal, int code, const String& messa
     return out;
 }
 
+String BuildToolTextSummary(const String& structured_json, bool is_error)
+{
+    Value parsed;
+    try {
+        parsed = ParseJSON(structured_json);
+    }
+    catch(CParser::Error) {
+        return is_error ? "PatchTrack rejected the request." : "PatchTrack returned a result.";
+    }
+
+    if(is_error || !(bool)parsed["ok"]) {
+        String text = "PatchTrack error: " + (String)parsed["error"];
+        String guidance = (String)parsed["resolution_hint"];
+        if(!guidance.IsEmpty())
+            text << ". " << guidance;
+        return text;
+    }
+
+    String transaction = (String)parsed["transaction_id"];
+    if(transaction.IsEmpty())
+        transaction = (String)parsed["rollback_transaction_id"];
+    if(!transaction.IsEmpty())
+        return "PatchTrack completed transaction " + transaction + ".";
+
+    if(!IsNull(parsed["files"])) {
+        int files = parsed["files"].GetCount();
+        int truncated = 0;
+        for(int i = 0; i < files; i++)
+            if((bool)parsed["files"][i]["diff_summary"]["truncated"])
+                truncated++;
+        String text = Format("PatchTrack checked %d file%s.", files, files == 1 ? "" : "s");
+        if(truncated)
+            text << Format(" %d diff%s truncated; inspect structuredContent.diff_summary.", truncated, truncated == 1 ? " was" : " were");
+        return text;
+    }
+
+    if(!((String)parsed["version"]).IsEmpty())
+        return "PatchTrack version " + (String)parsed["version"] + ".";
+    return "PatchTrack completed successfully.";
+}
+
 String BuildToolResult(const String& structured_json, bool is_error)
 {
+    String text_summary = BuildToolTextSummary(structured_json, is_error);
     String out;
     out << "{\n"
         << "  \"content\": [\n"
-        << "    {\"type\": \"text\", \"text\": " << JString(structured_json) << "}\n"
+        << "    {\"type\": \"text\", \"text\": " << JString(text_summary) << "}\n"
         << "  ],\n"
         << "  \"structuredContent\": " << structured_json << ",\n"
         << "  \"isError\": " << (is_error ? "true" : "false") << "\n"

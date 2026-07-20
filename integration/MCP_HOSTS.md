@@ -116,7 +116,7 @@ Keep args empty.
 
 ## OpenCode
 
-OpenCode launches the same argument-free stdio server. Copy
+OpenCode uses its native `mcp` configuration shape. Copy
 `integration/host_configs/opencode.example.json` into the OpenCode user config
 location as `opencode.json`, merge it with any existing configuration, and
 restart OpenCode. On Windows the default path is
@@ -136,19 +136,10 @@ Recommended command:
 E:\apps\github\upp_patchtrack\build\patchtrack_mcp.exe
 ```
 
-Keep args empty.
-
-Recommended OpenCode permissions:
-
-```json
-{
-  "patchtrack_*": "allow",
-  "patchtrack_apply": "ask",
-  "patchtrack_rollback": "ask"
-}
-```
-
-The specific `ask` rules should override the broad allow rule. If the host does anything more creative than that, it is inventing policy instead of following it.
+The template sets the local command as an array and keeps apply/rollback
+approval prompts stricter than the broad tool allow rule. Do not use the
+generic `mcpServers` example above as OpenCode configuration; that shape is
+labelled generic because it is not OpenCode's schema.
 
 The older `integration/opencode_patchtrack_command.md` file describes a command-prompt workflow. Prefer the MCP server once OpenCode is configured for MCP.
 

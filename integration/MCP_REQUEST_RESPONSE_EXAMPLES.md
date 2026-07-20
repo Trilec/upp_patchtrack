@@ -33,7 +33,7 @@ Response body shape:
     "protocolVersion": "2024-11-05",
     "serverInfo": {
       "name": "patchtrack_mcp",
-      "version": "1.1.0"
+      "version": "1.1.1"
     },
     "capabilities": {
       "tools": {

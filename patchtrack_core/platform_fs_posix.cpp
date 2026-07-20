@@ -10,6 +10,7 @@ Change log:
 #ifndef _WIN32
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -152,6 +153,42 @@ bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& no
     code = errno;
     not_found = code == ENOENT || code == ENOTDIR;
     return false;
+}
+
+bool PlatformPathContained(const String& workspace_root, const String& path, bool allow_missing,
+                           String& detail)
+{
+    char root_buf[PATH_MAX];
+    char path_buf[PATH_MAX];
+    if(!realpath(~workspace_root, root_buf)) {
+        detail = "The workspace root could not be canonicalized.";
+        return false;
+    }
+
+    String canonical_path;
+    if(realpath(~path, path_buf))
+        canonical_path = path_buf;
+    else if(allow_missing) {
+        String parent = GetFileFolder(path);
+        if(!realpath(~parent, path_buf)) {
+            detail = "The nearest existing target parent could not be canonicalized.";
+            return false;
+        }
+        canonical_path = AppendFileName(String(path_buf), GetFileName(path));
+    }
+    else {
+        detail = "The target could not be canonicalized.";
+        return false;
+    }
+
+    String root_full(root_buf);
+    if(!canonical_path.StartsWith(root_full) ||
+       (canonical_path.GetLength() > root_full.GetLength() &&
+        canonical_path[root_full.GetLength()] != '/')) {
+        detail = "The resolved target is outside the workspace root.";
+        return false;
+    }
+    return true;
 }
 
 void PlatformExitAbruptly(int code)

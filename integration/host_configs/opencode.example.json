@@ -1,10 +1,18 @@
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "patchtrack": {
-      "command": "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe",
-      "args": [],
-      "env": {}
+      "type": "local",
+      "command": [
+        "E:\\apps\\github\\upp_patchtrack\\build\\patchtrack_mcp.exe"
+      ],
+      "enabled": true,
+      "timeout": 10000
     }
+  },
+  "permission": {
+    "patchtrack_*": "allow",
+    "patchtrack_apply": "ask",
+    "patchtrack_rollback": "ask"
   }
 }
-

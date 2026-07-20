@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-07-20 - 1.1.1
+- Corrected the shipped OpenCode template to use OpenCode's native `mcp` local-server schema and added a parser regression check for its permissions and command shape.
+- Replaced substring-based path rejection with component-aware normalization and workspace containment checks for mixed separators, traversal, protected journal paths, missing targets, and Windows reparse components.
+- Made preview observational: stale claims are reported but not deleted, recovery reports are not persisted, and routine temporary-artifact discovery no longer recursively walks the workspace.
+- Throttled claim heartbeats by lease elapsed time, indexed planned files, cached final bytes/hashes/diffs, compacted transaction journals, and reduced MCP text content to a concise summary while retaining complete structuredContent.
+- Added path, preview immutability, OpenCode schema, response-shape, and scaling coverage. No atomic writes, flushes, snapshots, commit rechecks, verification, or rollback guarantees were weakened.
+
 ## 2026-07-20
 - Added a shared `1.1.0` version source, exposed through MCP initialization, a read-only `version` tool, and the CLI. Agents can now check what they are talking to before they start negotiating with a binary.
 - Added explicit `create_file` and allowed `rewrite_file` to create missing targets. Transactions journal the creation state, restore removes a newly-created file after a failed commit, and rollback removes it on purpose.

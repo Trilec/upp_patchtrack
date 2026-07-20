@@ -640,10 +640,38 @@ void TestEngineFailures(Harness& h)
              << "  \"workspace_root\": " << JString(root) << ",\n"
              << "  \"summary\": \"unsafe path\",\n"
              << "  \"actor\": \"harness\",\n"
-             << "  \"edits\": [{\"op\":\"rewrite_file\",\"file\":\"..\\evil.txt\",\"text\":\"bad\\n\"}]\n"
+             << "  \"edits\": [{\"op\":\"rewrite_file\",\"file\":" << JString("..\\evil.txt") << ",\"text\":\"bad\\n\"}]\n"
              << "}\n";
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "unsafe.json", path_req)), false, out, "engine-failures unsafe-path"))
         ExpectErrorCode(h, out, "UNSAFE_PATH", "engine-failures unsafe-path");
+
+    const char *unsafe_paths[] = {
+        ".patchtrack/file.json",
+        ".patchtrack\\file.json",
+        ".\\.patchtrack\\file.json",
+        "src\\..\\outside.txt",
+        "src/../outside.txt",
+        "src\\mixed/..\\outside.txt"
+    };
+    for(int i = 0; i < CountOf(unsafe_paths); i++) {
+        String body = String("{\"workspace_root\":") + JString(root)
+                    + ",\"summary\":\"path component check\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":"
+                    + JString(unsafe_paths[i]) + ",\"text\":\"blocked\\n\"}]}";
+        String label = String("engine-failures path-components ") + unsafe_paths[i];
+        if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, Format("unsafe-%d.json", i), body)), false, out, label))
+            ExpectErrorCode(h, out, "UNSAFE_PATH", label);
+    }
+
+    Expect(h, WriteFileText(AppendFileName(root, "safe.dir/file.txt"), "safe\n"), "engine-failures: failed to seed safe.dir");
+    Expect(h, WriteFileText(AppendFileName(root, "version..backup.txt"), "safe\n"), "engine-failures: failed to seed dotted filename");
+    const char *safe_paths[] = { "safe.dir\\file.txt", "version..backup.txt" };
+    for(int i = 0; i < CountOf(safe_paths); i++) {
+        String body = String("{\"workspace_root\":") + JString(root)
+                    + ",\"summary\":\"safe path check\",\"actor\":\"harness\",\"edits\":[{\"op\":\"rewrite_file\",\"file\":"
+                    + JString(safe_paths[i]) + ",\"text\":\"safe\\n\"}]}";
+        String label = String("engine-failures safe path ") + safe_paths[i];
+        ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, Format("safe-%d.json", i), body)), true, out, label);
+    }
 
     String bad_req;
     bad_req << "{\n"
@@ -695,6 +723,12 @@ void TestEngineFailures(Harness& h)
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "journal-escape.json", journal_req)), false, out, "engine-failures journal-path"))
         ExpectErrorCode(h, out, "UNSAFE_PATH", "engine-failures journal-path");
 }
+
+// Helpers used by the recovery and scale cases are defined with the other journal utilities below.
+String ClaimsRoot(const String& root);
+bool WriteClaimFile(const String& root, const String& session_id, const String& intent,
+                    const Vector<String>& files, int heartbeat_age_sec, int expires_in_sec,
+                    const String& summary, const String& actor);
 
 void TestCreateAndDriftDiagnostics(Harness& h)
 {
@@ -775,6 +809,47 @@ void TestCreateAndDriftDiagnostics(Harness& h)
     if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "large-preview.json", large_req)), true, out, "create-and-drift large preview")) {
         Expect(h, (bool)out["files"][0]["diff_summary"]["truncated"], "create-and-drift: large diff should be bounded");
         Expect(h, ((String)out["files"][0]["diff"]).Find("omitted") >= 0, "create-and-drift: large diff omitted marker missing");
+    }
+
+    String distant_rel = "generated/distant.txt";
+    String distant_abs = AppendFileName(root, distant_rel);
+    String distant_before, distant_after;
+    for(int i = 0; i < 100; i++) {
+        distant_before << Format("line-%03d\n", i);
+        distant_after << Format("line-%03d\n", i == 2 ? 200 : (i == 97 ? 900 : i));
+    }
+    Expect(h, WriteFileText(distant_abs, distant_before), "create-and-drift: failed to seed distant diff");
+    String distant_hash = HashFileViaTool(h, distant_abs);
+    String distant_req = String("{\"workspace_root\":") + JString(root)
+                       + ",\"summary\":\"distant edits\",\"actor\":\"harness\",\"edits\":["
+                       + "{\"op\":\"replace_exact\",\"file\":" + JString(distant_rel) + ",\"find\":\"line-002\\n\",\"text\":\"line-200\\n\",\"expected_sha256\":" + JString(distant_hash) + "},"
+                       + "{\"op\":\"replace_exact\",\"file\":" + JString(distant_rel) + ",\"find\":\"line-097\\n\",\"text\":\"line-900\\n\",\"expected_sha256\":" + JString(distant_hash) + "}]}";
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "distant-preview.json", distant_req)), true, out, "create-and-drift distant edits")) {
+        Expect(h, (int)out["files"][0]["diff_summary"]["lines_added"] == 2, "create-and-drift: distant diff added count incorrect");
+        Expect(h, !(bool)out["files"][0]["diff_summary"]["approximate"], "create-and-drift: distant diff should be exact");
+    }
+}
+
+void TestBoundedWorkspaceScan(Harness& h)
+{
+    CaseLog case_log(h, "bounded-workspace-scan", "Creates 10,000 unrelated files and proves preview scans metadata and known directories without walking the unrelated tree.");
+    String root = MakeCaseRoot(h, "bounded-scan");
+    String unrelated = AppendFileName(root, "unrelated");
+    Expect(h, RealizeDirectory(unrelated), "bounded-workspace-scan: failed to create unrelated directory");
+    for(int i = 0; i < 10000; i++)
+        Expect(h, SaveFile(AppendFileName(unrelated, Format("file-%05d.txt", i)), "unrelated\n"), "bounded-workspace-scan: failed to seed unrelated file");
+    String rel = "src/target.txt";
+    String abs = AppendFileName(root, rel);
+    Expect(h, WriteFileText(abs, "one\ntwo\n"), "bounded-workspace-scan: failed to seed target");
+    Vector<String> claim_files;
+    claim_files.Add(rel);
+    Expect(h, WriteClaimFile(root, "sess-scan-stale", "code_edit", claim_files, 300, -5, "scan test", "harness"), "bounded-workspace-scan: failed to seed claim");
+    String hash = HashFileViaTool(h, abs);
+    String req = String("{\"workspace_root\":") + JString(root) + ",\"summary\":\"bounded scan\",\"actor\":\"harness\",\"edits\":[{\"op\":\"replace_exact\",\"file\":" + JString(rel) + ",\"find\":\"two\\n\",\"text\":\"TWO\\n\",\"expected_sha256\":" + JString(hash) + "}]}";
+    Value out;
+    if(ExpectJsonResult(h, RunJsonCommand(h, "preview", WriteRequestFile(root, "bounded-preview.json", req)), true, out, "bounded-workspace-scan preview")) {
+        Expect(h, (int)out["startup_scan"]["files_examined"] < 10000, "bounded-workspace-scan: preview enumerated unrelated files");
+        Expect(h, FileExists(AppendFileName(ClaimsRoot(root), "sess-scan-stale.json")), "bounded-workspace-scan: preview cleaned stale claim");
     }
 }
 
@@ -975,6 +1050,26 @@ void TestMcpSelfTestSmoke(Harness& h)
     Expect(h, r.out.Find("mcp-selftest: ok") >= 0, "mcp-selftest-smoke: expected mcp-selftest: ok output=" + r.out);
 }
 
+void TestOpenCodeTemplate(Harness& h)
+{
+    CaseLog case_log(h, "opencode-template", "Parses the shipped OpenCode configuration and checks the host-specific MCP schema and approval policy.");
+    String path = AppendFileName(h.repo_root, "integration/host_configs/opencode.example.json");
+    Value config;
+    if(!Expect(h, ParseJsonOutput(LoadFile(path), config), "opencode-template: invalid JSON template " + path))
+        return;
+    Expect(h, !IsNull(config["mcp"]), "opencode-template: top-level mcp is missing");
+    Expect(h, IsNull(config["mcpServers"]), "opencode-template: generic mcpServers must not be present");
+    Value server = config["mcp"]["patchtrack"];
+    Expect(h, (String)server["type"] == "local", "opencode-template: PatchTrack type must be local");
+    Expect(h, server["command"].Is<ValueArray>(), "opencode-template: command must be an array");
+    Expect(h, server["command"].GetCount() == 1, "opencode-template: command must contain one executable");
+    Expect(h, (bool)server["enabled"], "opencode-template: server must be enabled");
+    Expect(h, (int)server["timeout"] == 10000, "opencode-template: timeout must be 10000 ms");
+    Expect(h, (String)config["permission"]["patchtrack_*"] == "allow", "opencode-template: broad permission must allow");
+    Expect(h, (String)config["permission"]["patchtrack_apply"] == "ask", "opencode-template: apply must ask");
+    Expect(h, (String)config["permission"]["patchtrack_rollback"] == "ask", "opencode-template: rollback must ask");
+}
+
 void TestMcpRoundTrip(Harness& h)
 {
     CaseLog case_log(h, "mcp-roundtrip", "Exercises newline-delimited MCP tool calls for hash, preview, apply, rollback, and recovery scan.");
@@ -1157,6 +1252,13 @@ void TestMcpRoundTrip(Harness& h)
            "mcp-roundtrip: apply reported MCP error");
     Expect(h, apply_cmd.out.Find("\"ok\": true") >= 0 || apply_cmd.out.Find("\"ok\":true") >= 0,
            "mcp-roundtrip: apply did not report ok");
+    String mcp_text = (String)apply_rpc["result"]["content"][0]["text"];
+    Expect(h, mcp_text.Find("PatchTrack completed transaction") >= 0,
+           "mcp-roundtrip: apply content should be a concise human summary");
+    Expect(h, mcp_text.Find("diff_summary") < 0 && mcp_text.Find("hash_before") < 0,
+           "mcp-roundtrip: apply content should not duplicate structured file data");
+    Expect(h, !IsNull(apply_rpc["result"]["structuredContent"]["files"][0]["diff"]),
+           "mcp-roundtrip: structuredContent should retain the complete bounded diff");
     Expect(h, LoadFile(abs).Find("gamma") >= 0, "mcp-roundtrip: apply did not update file");
 
     String transaction_id = (String)apply_rpc["result"]["structuredContent"]["transaction_id"];
@@ -1325,6 +1427,8 @@ void TestJournalStateAndSnapshots(Harness& h)
     Expect(h, ((String)tran["error"]).StartsWith("WRITE_FAILED"), "journal-state-snapshots: expected stored write failure");
     Value files = tran["files"];
     Expect(h, files.GetCount() == 2, "journal-state-snapshots: expected two changed files in transaction log");
+    Expect(h, IsNull(files[0]["diff"]), "journal-state-snapshots: durable journal should omit visible diff");
+    Expect(h, !IsNull(files[0]["snapshot_before"]), "journal-state-snapshots: compact journal lost snapshot reference");
     ExpectSnapshotsExist(h, tran_file, files, "journal-state-snapshots");
 }
 
@@ -1497,6 +1601,7 @@ void TestLargeBatchStress(Harness& h)
     if(!ExpectJsonResult(h, RunJsonCommand(h, "apply", request), true, apply, "large-batch-stress apply"))
         return;
     Expect(h, LoadFile(abs) == after, "large-batch-stress: apply output mismatch");
+    Expect(h, (int)apply["claim_writes"] <= 4, "large-batch-stress: claim writes scaled with file edits");
 
     String rb;
     rb << "{\n"
@@ -1760,6 +1865,10 @@ void TestStartupRecoveryScan(Harness& h)
     Vector<String> stale_files;
     stale_files.Add(rel3);
     Expect(h, WriteClaimFile(root, "sess-stale-scan", "code_edit", stale_files, 300, -5, "stale scan claim"), "startup-recovery-scan: failed to write stale claim");
+    String stale_claim_path = AppendFileName(ClaimsRoot(root), "sess-stale-scan.json");
+    String recovery_path = AppendFileName(AppendFileName(root, ".patchtrack"), "recovery_scan.json");
+    String claim_before = LoadFile(stale_claim_path);
+    String recovery_before = LoadFile(recovery_path);
 
     String preview_req;
     preview_req << "{\n"
@@ -1777,7 +1886,16 @@ void TestStartupRecoveryScan(Harness& h)
     Value startup = preview["startup_scan"];
     Expect(h, startup["pending_transactions"].GetCount() == 1, "startup-recovery-scan: expected one pending transaction in startup_scan");
     Expect(h, startup["stale_claims"].GetCount() == 1, "startup-recovery-scan: expected one stale claim in startup_scan");
-    Expect(h, !FileExists(AppendFileName(ClaimsRoot(root), "sess-stale-scan.json")), "startup-recovery-scan: stale claim file should be removed by scan");
+    Expect(h, FileExists(stale_claim_path), "startup-recovery-scan: preview must not remove stale claim");
+    Expect(h, LoadFile(stale_claim_path) == claim_before, "startup-recovery-scan: preview changed stale claim bytes");
+    Expect(h, LoadFile(recovery_path) == recovery_before, "startup-recovery-scan: preview rewrote recovery_scan.json");
+
+    Vector<String> recovery_args;
+    recovery_args.Add("recovery_scan");
+    recovery_args.Add(root);
+    CommandResult recovery_cmd = RunTool(h.patchtrack_exe, recovery_args, h.repo_root);
+    Expect(h, recovery_cmd.started && recovery_cmd.exit_code == 0, "startup-recovery-scan: explicit recovery scan failed");
+    Expect(h, !FileExists(stale_claim_path), "startup-recovery-scan: explicit recovery scan should remove stale claim");
 }
 String Usage()
 {
@@ -1799,6 +1917,7 @@ int RunAll(Harness& h)
 
     TestSelfTestSmoke(h);
     TestMcpSelfTestSmoke(h);
+    TestOpenCodeTemplate(h);
     TestMcpRoundTrip(h);
     TestCommandSurface(h);
     TestPreviewNoWrite(h);
@@ -1806,6 +1925,7 @@ int RunAll(Harness& h)
     TestAliasesAndNoOpPreview(h);
     TestEngineFailures(h);
     TestCreateAndDriftDiagnostics(h);
+    TestBoundedWorkspaceScan(h);
     TestTransportFailures(h);
     TestRollbackFailures(h);
     TestJournalStateAndSnapshots(h);
