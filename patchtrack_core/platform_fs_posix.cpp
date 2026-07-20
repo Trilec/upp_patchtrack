@@ -1,6 +1,9 @@
 /*
 POSIX filesystem implementation for PatchTrack.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 Change log:
 - 2026-04-28: Added POSIX-backed platform helpers for Linux and macOS builds.
 */

@@ -1,6 +1,9 @@
 /*
 Windows filesystem implementation for PatchTrack.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 Change log:
 - 2026-04-28: Added Win32-backed platform helpers for file IO, directory creation,
   error classification, and abrupt test termination.

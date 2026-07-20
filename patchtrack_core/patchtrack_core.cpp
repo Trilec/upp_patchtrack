@@ -1,6 +1,9 @@
 /*
 PatchTrack core engine.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 This file contains the journaled patch engine and built-in selftest.
 The transactional areas intentionally prefer explicit state recording over implicit success
 so that hosts and future MCP adapters can distinguish pending, applied, restored, and
@@ -386,6 +389,9 @@ struct DiffOp : Moveable<DiffOp> {
     int new_line = 0;
 };
 
+// Builds both the visible hunks and their counts from one bounded operation
+// sequence. Keeping these outputs together prevents preview and journal data
+// from quietly disagreeing after a large or shifted edit.
 DiffResult BuildDiffResult(const String& path, const String& before, const String& after)
 {
     Vector<String> a = SplitLinesKeepEmpty(before);
@@ -1596,6 +1602,9 @@ void FinalizePlannedOutputs(Vector<PlannedFile>& files)
     }
 }
 
+// Planning is deliberately side-effect free. It reads targets, applies edits
+// in memory, validates the final content, and only then caches write bytes,
+// hashes and diffs for the commit path.
 bool Plan(Value req, Vector<PlannedFile>& files, String& error)
 {
     if(!ValidateRequestShape(req, error))
@@ -1979,6 +1988,8 @@ bool PersistRecoveryScan(const String& root, const RecoveryScanInfo& scan, const
     return WriteFileDetailed(RecoveryScanPath(root), BuildRecoveryScanJson(scan) + "\n", "recovery_scan", "write_transaction_log", inject_fault, "permission_denied_transaction_log", error);
 }
 
+// Recovery scanning is metadata-focused and bounded. Preview disables all
+// cleanup and persistence so asking an AI for a preview cannot alter state.
 bool RunStartupRecoveryScan(const String& root,
                             RecoveryScanInfo& scan,
                             const String& inject_fault = String(),
@@ -2588,6 +2599,9 @@ bool FinalizeRollbackFailure(const String& tran_file,
     return false;
 }
 
+// Rollback preflights every journaled file before mutation, then restores from
+// snapshots. If restoration fails part-way through, the already-restored files
+// are put back so rollback failure does not become a second corruption path.
 bool Rollback(Value req, String& result_json, String& error)
 {
     Vector<String> checks;

@@ -1,6 +1,9 @@
 /*
 PatchTrack platform filesystem abstraction.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 This isolates OS-specific file, directory, error-code, and abrupt-exit behavior
 from the transactional patch engine so the engine can build cleanly on Windows,
 Linux, and macOS.
@@ -26,6 +29,8 @@ bool PlatformReadFileRaw(const String& path, String& out, PlatformErrorCode& cod
 bool PlatformWriteFileRaw(const String& path, const String& data, PlatformErrorCode& code);
 bool PlatformDeleteFileRaw(const String& path, PlatformErrorCode& code, bool& not_found);
 // Confirms that a path and its existing parent chain remain inside the workspace.
+// Rejects lexical escapes and existing reparse/symlink components before the
+// engine opens a target. This is containment hardening, not a race-proof sandbox.
 bool PlatformPathContained(const String& workspace_root, const String& path, bool allow_missing,
                            String& detail);
 void PlatformExitAbruptly(int code);

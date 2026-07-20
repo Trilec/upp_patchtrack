@@ -1,6 +1,9 @@
 /*
 PatchTrack MCP frontend.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 This package exposes patchtrack_core as a first-class MCP stdio server instead of
 routing everything back through CLI-shaped commands. The server keeps transport
 logic here while the transactional engine stays in patchtrack_core.
@@ -153,6 +156,8 @@ String BuildToolTextSummary(const String& structured_json, bool is_error)
     return "PatchTrack completed successfully.";
 }
 
+// MCP clients receive concise text for humans and agents, while structured
+// content remains authoritative for hashes, diffs, transaction IDs and errors.
 String BuildToolResult(const String& structured_json, bool is_error)
 {
     String text_summary = BuildToolTextSummary(structured_json, is_error);

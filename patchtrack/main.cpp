@@ -1,6 +1,9 @@
 /*
 PatchTrack CLI frontend.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 This package keeps the local console workflow available, but it is now just one
 frontend over patchtrack_core. Request parsing, transaction planning, journaling,
 and recovery all live in the shared engine so the CLI and MCP server stay aligned.

@@ -1,6 +1,9 @@
 /*
 PatchTrack protocol test harness.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 Runs the compiled patchtrack executable end-to-end against disposable workspaces.
 The focus is protocol behavior, journal integrity, rollback safety, and stress coverage.
 
@@ -1671,6 +1674,9 @@ void TestLargeBatchStress(Harness& h)
     Expect(h, LoadFile(abs) == before, "large-batch-stress: rollback did not restore original file");
 }
 
+// This intentionally uses the public process boundary for every transaction;
+// it exposes startup, journaling and cleanup costs that an in-process test can
+// accidentally hide.
 void TestSequentialTransactionStress(Harness& h)
 {
     CaseLog case_log(h, "sequential-1000-transactions", "Runs 1000 small transactions in sequence to shake out journaling, repeated allocation, and state drift issues.");

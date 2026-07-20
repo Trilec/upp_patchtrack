@@ -1,6 +1,9 @@
 /*
 PatchTrack shared core package.
 
+Copyright (c) 2026 Curtis Edwards (dodobar)
+License: MIT; see LICENSE.
+
 This header exposes the engine-facing API that both the CLI frontend and the
 MCP frontend call directly. The goal is to keep transport concerns out of the
 core so request validation, journaling, recovery, and diagnostics stay in one
